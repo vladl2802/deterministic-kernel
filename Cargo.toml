@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "hypervisor",
+    "kernel"
+]
+
+resolver = "2"
+
+[profile.kernel-dev]
+inherits = "dev"
+panic = "abort"
+[profile.kernel-release]
+inherits = "release"
+panic = "abort"
