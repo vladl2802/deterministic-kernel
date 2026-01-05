@@ -3,9 +3,11 @@
 
 use core;
 
+use arch_x86_64::instructions;
+
 unsafe fn halt() -> ! {
     loop {
-        unsafe { core::arch::asm!("hlt") }
+        instructions::hlt()
     }
 }
 
@@ -17,15 +19,8 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 
 #[inline(never)]
 fn kernel_main() -> ! {
-    unsafe {
-        core::arch::asm!("
-            mov dx, 0x3f8
-            mov al, {byte}
-            out dx, al
-            ",
-            byte = in(reg_byte) b'A'
-        )
-    }
+    let mut port = instructions::port::Port::new(0x3f8);
+    unsafe { port.write(b'A') }
 
     unsafe { halt() }
 }
