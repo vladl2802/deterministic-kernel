@@ -1,0 +1,2 @@
+[alias]
+kernel-build = "build -p kernel --config kernel/.cargo/config.toml"
