@@ -1,10 +1,10 @@
 use core::slice;
-use std::{env, fs::File, io::Read, ptr::null_mut};
+use std::{env, fs::File, io::Read, mem, ptr::null_mut};
 
 use kvm_bindings::{KVM_MEM_LOG_DIRTY_PAGES, kvm_userspace_memory_region};
 use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
 
-use arch_x86_64::pte;
+use arch_x86_64::{protocol, pte};
 use goblin::elf::{Elf, program_header};
 use nix::libc;
 
@@ -204,12 +204,44 @@ fn setup_vm(kvm: &Kvm, kernel_binary: &str) -> (VmFd, VcpuFd) {
     (vm, vcpu)
 }
 
+struct KernelLogCollector {
+    buf: Vec<u8>,
+}
+
+impl KernelLogCollector {
+    fn new() -> Self {
+        KernelLogCollector { buf: Vec::new() }
+    }
+
+    fn add_bytes(&mut self, data: &[u8]) {
+        data.into_iter().for_each(|byte| self.add_byte(*byte));
+    }
+
+    fn add_byte(&mut self, byte: u8) {
+        if byte == '\n' as u8 {
+            self.flush();
+        } else {
+            self.buf.push(byte);
+        }
+    }
+
+    fn flush(&mut self) {
+        let buf = mem::replace(&mut self.buf, Vec::new());
+        match String::from_utf8(buf) {
+            Ok(log) => println!(" > {log}"),
+            Err(err) => println!("logging error: {err}"),
+        }
+    }
+}
+
 fn main() {
     let path_to_kernel_binary = env::args().nth(1).unwrap();
 
     let kvm = Kvm::new().unwrap();
 
     let (vm, mut vcpu_fd) = setup_vm(&kvm, &path_to_kernel_binary);
+
+    let mut collector = KernelLogCollector::new();
 
     loop {
         match vcpu_fd.run().expect("run failed") {
@@ -220,10 +252,14 @@ fn main() {
                 );
             }
             VcpuExit::IoOut(addr, data) => {
-                println!(
-                    "Received an I/O out exit. Address: {:#x}. Data: {:#x}",
-                    addr, data[0],
-                );
+                if addr == protocol::LOG_PORT {
+                    collector.add_bytes(data);
+                } else {
+                    println!(
+                        "Received an I/O out exit. Address: {:#x}. Data: {:#x}",
+                        addr, data[0],
+                    );
+                }
             }
             VcpuExit::MmioRead(addr, _data) => {
                 println!("Received an MMIO Read Request for the address {:#x}.", addr,);
