@@ -11,3 +11,4 @@ bench = false
 
 [dependencies]
 arch_x86_64 = { version = "0.1.0", path = "../arch_x86_64" }
+log = "0.4.29"
