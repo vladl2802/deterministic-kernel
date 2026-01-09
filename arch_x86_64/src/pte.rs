@@ -8,27 +8,6 @@ pub type PageTable = [PageTableEntry; PAGE_TABLE_ENTRY_COUNT];
 #[repr(transparent)]
 pub struct PageTableEntry(usize);
 
-bitflags! {
-    #[derive(Clone, Copy, Default, Eq, PartialEq)]
-    pub struct PageTableFlags: usize {
-        const PRESENT = 1 << 0;
-        const WRITABLE = 1 << 1;
-        const USER = 1 << 2;
-        const WRITE_THROUGH = 1 << 3;
-        const NO_CACHE = 1 << 4;
-        const ACCESSED = 1 << 5;
-        const DIRTY = 1 << 6;
-        const HUGE = 1 << 7;
-        const GLOBAL = 1 << 8;
-
-        const AVAILABLE_0 = 1 << 9;
-        const AVAILABLE_1 = 1 << 10;
-        const AVAILABLE_2 = 1 << 11;
-
-        const EXECUTABLE = 1 << 63;
-    }
-}
-
 impl PageTableEntry {
     const ADDRESS_MASK: usize = ((1 << PHYS_ADDRESS_BITS) - 1) & !((1 << PAGE_OFFSET_BITS) - 1);
     const FLAGS_MASK: usize = !Self::ADDRESS_MASK;
@@ -55,6 +34,37 @@ impl PageTableEntry {
     }
 }
 
+impl fmt::Debug for PageTableEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.flags().is_present() {
+            write!(f, "address={:x} flags={}", self.address(), self.flags())
+        } else {
+            write!(f, "<non-present>")
+        }
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Default, Eq, PartialEq)]
+    pub struct PageTableFlags: usize {
+        const PRESENT = 1 << 0;
+        const WRITABLE = 1 << 1;
+        const USER = 1 << 2;
+        const WRITE_THROUGH = 1 << 3;
+        const NO_CACHE = 1 << 4;
+        const ACCESSED = 1 << 5;
+        const DIRTY = 1 << 6;
+        const HUGE = 1 << 7;
+        const GLOBAL = 1 << 8;
+
+        const AVAILABLE_0 = 1 << 9;
+        const AVAILABLE_1 = 1 << 10;
+        const AVAILABLE_2 = 1 << 11;
+
+        const EXECUTABLE = 1 << 63;
+    }
+}
+
 macro_rules! derive_flags_checker {
     ($fn_name:ident, $flag:ident) => {
         impl PageTableFlags {
@@ -70,16 +80,6 @@ derive_flags_checker!(is_writable, WRITABLE);
 derive_flags_checker!(is_executable, EXECUTABLE);
 derive_flags_checker!(is_dirty, DIRTY);
 derive_flags_checker!(is_huge, HUGE);
-
-impl fmt::Debug for PageTableEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.flags().is_present() {
-            write!(f, "address={:x} flags={}", self.address(), self.flags())
-        } else {
-            write!(f, "<non-present>")
-        }
-    }
-}
 
 impl fmt::Debug for PageTableFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
