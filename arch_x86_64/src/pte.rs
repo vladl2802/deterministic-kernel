@@ -1,8 +1,77 @@
-use core::fmt;
+use core::{fmt, mem::MaybeUninit, ops::{Index, IndexMut}};
 
 use bitflags::bitflags;
 
-pub type PageTable = [PageTableEntry; PAGE_TABLE_ENTRY_COUNT];
+#[repr(transparent)]
+pub struct PageTable([PageTableEntry; PAGE_TABLE_ENTRY_COUNT]);
+
+impl PageTable {
+    pub fn new_non_present(page: &mut L0Page) -> &mut Self {
+        let uninit = Self::uninit_mut(page);
+        uninit.iter_mut().for_each(|pte| {
+            pte.write(PageTableEntry::non_present());
+        });
+        Self::existing_mut(page)
+    }
+
+    pub fn existing_ref(page: &L0Page) -> &Self {
+        let ptes = unsafe { Self::uninit_ref(page).assume_init_ref() };
+        unsafe { &*(ptes.as_ptr().cast()) }
+    }
+
+    pub fn existing_mut(page: &mut L0Page) -> &mut Self {
+        let ptes = unsafe { Self::uninit_mut(page).assume_init_mut() };
+        unsafe { &mut *(ptes.as_mut_ptr().cast()) }
+    }
+
+    fn uninit_mut(page: &mut L0Page) -> &mut [MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
+        unsafe { &mut *page.mem_mut().as_mut_ptr().cast() }
+    }
+
+    fn uninit_ref(page: &L0Page) -> &[MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
+        unsafe { &*page.mem_ref().as_ptr().cast() }
+    }
+}
+
+impl Index<usize> for PageTable {
+    type Output = PageTableEntry;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.index(index)
+    }
+}
+
+impl IndexMut<usize> for PageTable {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.0.index_mut(index)
+    }
+}
+
+macro_rules! derive_page {
+    ($name:ident, $size:literal, $expected_size:ident) => {
+        #[repr(C, align($size))]
+        #[derive(Copy, Clone)]
+        pub struct $name([u8; $size]);
+
+        impl $name {
+            pub const SIZE: usize = $size;
+
+            pub fn mem_ref(&self) -> &[u8; $size] {
+                &self.0
+            }
+
+            pub fn mem_mut(&mut self) -> &mut [u8; $size] {
+                &mut self.0
+            }
+        }
+
+        const _: () = assert!($name::SIZE == $expected_size);
+    };
+}
+derive_page!(L0Page, 0x1000, LO_PAGE_SIZE);
+derive_page!(L1HugePage, 0x200000, L1_HUGE_PAGE_SIZE);
+// L2HugePage cannot be expressed as aligned to 1<<30 slice because aligment is limited to <= 1<<29
+// But it doesn't seem usefull anyways
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 #[repr(transparent)]
@@ -120,3 +189,6 @@ const PHYS_ADDRESS_BITS: usize = 52;
 const PAGE_OFFSET_BITS: usize = 12;
 const PAGE_TABLE_INDEX_BITS: usize = 9;
 pub const PAGE_TABLE_ENTRY_COUNT: usize = 1 << PAGE_TABLE_INDEX_BITS;
+
+pub const LO_PAGE_SIZE: usize = 1 << PAGE_OFFSET_BITS; // 4KiB
+pub const L1_HUGE_PAGE_SIZE: usize = LO_PAGE_SIZE << PAGE_TABLE_INDEX_BITS; // 2MiB

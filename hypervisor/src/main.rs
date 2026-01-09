@@ -59,52 +59,21 @@ fn setup_physical_memory(vm: &VmFd) -> &mut [u8] {
     unsafe { slice::from_raw_parts_mut(memory_ptr, MEM_SIZE) }
 }
 
-fn setup_virtual_table(mem: &mut [u8]) -> u64 {
+fn setup_virtual_table(memory: &mut [u8]) -> u64 {
     use pte::PageTableFlags as fs;
     const PAGE_TABLE_4: usize = 0x1000;
     const PAGE_TABLE_3: usize = 0x2000;
     const PAGE_TABLE_2: usize = 0x3000;
 
-    let memory_ptr = mem.as_ptr();
+    let (pref, pages, suff) = unsafe { memory.align_to_mut() };
+    assert_eq!((pref.len(), suff.len()), (0, 0));
+
     let mapping_flags = fs::PRESENT | fs::WRITABLE | fs::EXECUTABLE;
-
-    let pt4: &mut pte::PageTable = unsafe {
-        slice::from_raw_parts_mut(
-            (memory_ptr.add(PAGE_TABLE_4)) as *mut _,
-            pte::PAGE_TABLE_ENTRY_COUNT,
-        )
-    }
-    .try_into()
-    .unwrap();
-    for pte in pt4.iter_mut() {
-        *pte = pte::PageTableEntry::non_present();
-    }
+    let pt4 = pte::PageTable::new_non_present(&mut pages[1]);
     pt4[0] = pte::PageTableEntry::new(PAGE_TABLE_3, mapping_flags);
-
-    let pt3: &mut pte::PageTable = unsafe {
-        slice::from_raw_parts_mut(
-            (memory_ptr.add(PAGE_TABLE_3)) as *mut _,
-            pte::PAGE_TABLE_ENTRY_COUNT,
-        )
-    }
-    .try_into()
-    .unwrap();
-    for pte in pt3.iter_mut() {
-        *pte = pte::PageTableEntry::non_present();
-    }
+    let pt3 = pte::PageTable::new_non_present(&mut pages[2]);
     pt3[0] = pte::PageTableEntry::new(PAGE_TABLE_2, mapping_flags);
-
-    let pt2: &mut pte::PageTable = unsafe {
-        slice::from_raw_parts_mut(
-            (memory_ptr.add(PAGE_TABLE_2)) as *mut _,
-            pte::PAGE_TABLE_ENTRY_COUNT,
-        )
-    }
-    .try_into()
-    .unwrap();
-    for pte in pt2.iter_mut() {
-        *pte = pte::PageTableEntry::non_present();
-    }
+    let pt2 = pte::PageTable::new_non_present(&mut pages[3]);
     pt2[0] = pte::PageTableEntry::new(0x0, mapping_flags | fs::HUGE);
     pt2[1] = pte::PageTableEntry::new(0x200000, mapping_flags | fs::HUGE);
     pt2[2] = pte::PageTableEntry::new(0x400000, mapping_flags | fs::HUGE);
