@@ -1,4 +1,8 @@
-use core::{fmt, mem::MaybeUninit, ops::{Index, IndexMut}};
+use core::{
+    fmt,
+    mem::MaybeUninit,
+    ops::{Index, IndexMut},
+};
 
 use bitflags::bitflags;
 
@@ -11,15 +15,15 @@ impl PageTable {
         uninit.iter_mut().for_each(|pte| {
             pte.write(PageTableEntry::non_present());
         });
-        Self::existing_mut(page)
+        unsafe { Self::existing_mut(page) }
     }
 
-    pub fn existing_ref(page: &L0Page) -> &Self {
+    pub unsafe fn existing_ref(page: &L0Page) -> &Self {
         let ptes = unsafe { Self::uninit_ref(page).assume_init_ref() };
         unsafe { &*(ptes.as_ptr().cast()) }
     }
 
-    pub fn existing_mut(page: &mut L0Page) -> &mut Self {
+    pub unsafe fn existing_mut(page: &mut L0Page) -> &mut Self {
         let ptes = unsafe { Self::uninit_mut(page).assume_init_mut() };
         unsafe { &mut *(ptes.as_mut_ptr().cast()) }
     }
@@ -51,16 +55,16 @@ macro_rules! derive_page {
     ($name:ident, $size:literal, $expected_size:ident) => {
         #[repr(C, align($size))]
         #[derive(Copy, Clone)]
-        pub struct $name([u8; $size]);
+        pub struct $name([MaybeUninit<u8>; $size]);
 
         impl $name {
             pub const SIZE: usize = $size;
 
-            pub fn mem_ref(&self) -> &[u8; $size] {
+            pub fn mem_ref(&self) -> &[MaybeUninit<u8>; $size] {
                 &self.0
             }
 
-            pub fn mem_mut(&mut self) -> &mut [u8; $size] {
+            pub fn mem_mut(&mut self) -> &mut [MaybeUninit<u8>; $size] {
                 &mut self.0
             }
         }
