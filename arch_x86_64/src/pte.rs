@@ -6,6 +6,39 @@ use core::{
 
 use bitflags::bitflags;
 
+use crate::{align_marker::AlignMarker, define_align};
+
+pub struct PageAligment;
+
+define_align!(AlignL0, PageAligment, 0x1000, L0_PAGE_SIZE);
+define_align!(AlignL1, PageAligment, 0x200000, L1_HUGE_PAGE_SIZE);
+// AlignL2 (and L2 pages) cannot be expressed as aligned to 1<<30 slice because aligment is limited to <= 1<<29
+// But it doesn't seem usefull anyways
+
+pub struct Page<const SIZE: usize>
+where
+    PageAligment: AlignMarker<SIZE>,
+{
+    memory: [MaybeUninit<u8>; SIZE],
+    _align: <PageAligment as AlignMarker<SIZE>>::Marker,
+}
+
+impl<const SIZE: usize> Page<SIZE>
+where
+    PageAligment: AlignMarker<SIZE>,
+{
+    pub fn mem_ref(&self) -> &[MaybeUninit<u8>; SIZE] {
+        &self.memory
+    }
+
+    pub fn mem_mut(&mut self) -> &mut [MaybeUninit<u8>; SIZE] {
+        &mut self.memory
+    }
+}
+
+pub type L0Page = Page<L0_PAGE_SIZE>;
+pub type L1HugePage = Page<L1_HUGE_PAGE_SIZE>;
+
 #[repr(transparent)]
 pub struct PageTable([PageTableEntry; PAGE_TABLE_ENTRY_COUNT]);
 
@@ -50,32 +83,6 @@ impl IndexMut<usize> for PageTable {
         self.0.index_mut(index)
     }
 }
-
-macro_rules! derive_page {
-    ($name:ident, $size:literal, $expected_size:ident) => {
-        #[repr(C, align($size))]
-        #[derive(Copy, Clone)]
-        pub struct $name([MaybeUninit<u8>; $size]);
-
-        impl $name {
-            pub const SIZE: usize = $size;
-
-            pub fn mem_ref(&self) -> &[MaybeUninit<u8>; $size] {
-                &self.0
-            }
-
-            pub fn mem_mut(&mut self) -> &mut [MaybeUninit<u8>; $size] {
-                &mut self.0
-            }
-        }
-
-        const _: () = assert!($name::SIZE == $expected_size);
-    };
-}
-derive_page!(L0Page, 0x1000, LO_PAGE_SIZE);
-derive_page!(L1HugePage, 0x200000, L1_HUGE_PAGE_SIZE);
-// L2HugePage cannot be expressed as aligned to 1<<30 slice because aligment is limited to <= 1<<29
-// But it doesn't seem usefull anyways
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 #[repr(transparent)]
@@ -194,5 +201,5 @@ const PAGE_OFFSET_BITS: usize = 12;
 const PAGE_TABLE_INDEX_BITS: usize = 9;
 pub const PAGE_TABLE_ENTRY_COUNT: usize = 1 << PAGE_TABLE_INDEX_BITS;
 
-pub const LO_PAGE_SIZE: usize = 1 << PAGE_OFFSET_BITS; // 4KiB
-pub const L1_HUGE_PAGE_SIZE: usize = LO_PAGE_SIZE << PAGE_TABLE_INDEX_BITS; // 2MiB
+pub const L0_PAGE_SIZE: usize = 1 << PAGE_OFFSET_BITS; // 4KiB
+pub const L1_HUGE_PAGE_SIZE: usize = L0_PAGE_SIZE << PAGE_TABLE_INDEX_BITS; // 2MiB

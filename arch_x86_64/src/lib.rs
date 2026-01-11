@@ -8,5 +8,7 @@ pub mod instructions {
     }
 }
 
+pub mod align_marker;
+
 pub mod protocol;
 pub mod pte;
