@@ -5,12 +5,9 @@ use core::{
 };
 
 use bitflags::bitflags;
+use common::{align_marker::AlignMarker, define_align};
 
-use crate::{
-    addr::PhysAddr,
-    align_marker::AlignMarker,
-    define_align,
-};
+use crate::addr::PhysAddr;
 
 pub struct PageAligment;
 

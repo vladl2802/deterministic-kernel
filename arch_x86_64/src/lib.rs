@@ -8,9 +8,7 @@ pub mod instructions {
     }
 }
 
-pub use x86_64::addr as addr;
-
-pub mod align_marker;
+pub use x86_64::addr;
 
 pub mod protocol;
 pub mod pte;

@@ -22,7 +22,7 @@ pub mod macros {
                 pub const ALIGN: usize = $align;
             }
 
-            impl crate::align_marker::AlignMarker<$align> for $origin {
+            impl $crate::align_marker::AlignMarker<$align> for $origin {
                 const ALIGN: usize = $align;
 
                 type Marker = $name;

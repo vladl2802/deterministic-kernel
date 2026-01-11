@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "arch_x86_64",
+    "common",
     "hypervisor",
     "kernel"
 ]
