@@ -1,4 +1,6 @@
 #![no_std]
+// features
+#![feature(align_to_uninit_mut)]
 
 pub mod instructions {
     pub use x86_64::instructions::*;

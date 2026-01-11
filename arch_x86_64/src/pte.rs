@@ -5,7 +5,7 @@ use core::{
 };
 
 use bitflags::bitflags;
-use common::{align_marker::AlignMarker, define_align};
+use common::{align_marker::AlignMarker, assert_alignment, define_align};
 
 use crate::addr::PhysAddr;
 
@@ -47,7 +47,9 @@ pub struct PageTable([PageTableEntry; PAGE_TABLE_ENTRY_COUNT]);
 
 impl PageTable {
     pub fn new_non_present(page: &mut L0Page) -> &mut Self {
-        let uninit = Self::uninit_mut(page);
+        let uninit = assert_alignment!(page.bytes_mut().align_to_uninit_mut::<PageTableEntry>())
+            .as_mut_array::<PAGE_TABLE_ENTRY_COUNT>()
+            .unwrap();
         uninit.iter_mut().for_each(|pte| {
             pte.write(PageTableEntry::non_present());
         });
@@ -55,21 +57,11 @@ impl PageTable {
     }
 
     pub unsafe fn existing_ref(page: &L0Page) -> &Self {
-        let ptes = unsafe { Self::uninit_ref(page).assume_init_ref() };
-        unsafe { &*(ptes.as_ptr().cast()) }
+        &assert_alignment!(unsafe { page.bytes_ref().assume_init_ref().align_to() })[0]
     }
 
     pub unsafe fn existing_mut(page: &mut L0Page) -> &mut Self {
-        let ptes = unsafe { Self::uninit_mut(page).assume_init_mut() };
-        unsafe { &mut *(ptes.as_mut_ptr().cast()) }
-    }
-
-    fn uninit_mut(page: &mut L0Page) -> &mut [MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
-        unsafe { &mut *page.bytes_mut().as_mut_ptr().cast() }
-    }
-
-    fn uninit_ref(page: &L0Page) -> &[MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
-        unsafe { &*page.bytes_ref().as_ptr().cast() }
+        &mut assert_alignment!(unsafe { page.bytes_mut().assume_init_mut().align_to_mut() })[0]
     }
 }
 
