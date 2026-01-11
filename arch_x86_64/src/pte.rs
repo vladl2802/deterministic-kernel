@@ -6,7 +6,11 @@ use core::{
 
 use bitflags::bitflags;
 
-use crate::{align_marker::AlignMarker, define_align};
+use crate::{
+    addr::PhysAddr,
+    align_marker::AlignMarker,
+    define_align,
+};
 
 pub struct PageAligment;
 
@@ -27,11 +31,13 @@ impl<const SIZE: usize> Page<SIZE>
 where
     PageAligment: AlignMarker<SIZE>,
 {
-    pub fn mem_ref(&self) -> &[MaybeUninit<u8>; SIZE] {
+    pub const SIZE: u64 = SIZE as u64;
+
+    pub fn bytes_ref(&self) -> &[MaybeUninit<u8>; SIZE] {
         &self.memory
     }
 
-    pub fn mem_mut(&mut self) -> &mut [MaybeUninit<u8>; SIZE] {
+    pub fn bytes_mut(&mut self) -> &mut [MaybeUninit<u8>; SIZE] {
         &mut self.memory
     }
 }
@@ -62,11 +68,11 @@ impl PageTable {
     }
 
     fn uninit_mut(page: &mut L0Page) -> &mut [MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
-        unsafe { &mut *page.mem_mut().as_mut_ptr().cast() }
+        unsafe { &mut *page.bytes_mut().as_mut_ptr().cast() }
     }
 
     fn uninit_ref(page: &L0Page) -> &[MaybeUninit<PageTableEntry>; PAGE_TABLE_ENTRY_COUNT] {
-        unsafe { &*page.mem_ref().as_ptr().cast() }
+        unsafe { &*page.bytes_ref().as_ptr().cast() }
     }
 }
 
@@ -86,22 +92,23 @@ impl IndexMut<usize> for PageTable {
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct PageTableEntry(usize);
+pub struct PageTableEntry(u64);
 
 impl PageTableEntry {
-    const ADDRESS_MASK: usize = ((1 << PHYS_ADDRESS_BITS) - 1) & !((1 << PAGE_OFFSET_BITS) - 1);
-    const FLAGS_MASK: usize = !Self::ADDRESS_MASK;
+    const ADDRESS_MASK: u64 = ((1 << PHYS_ADDRESS_BITS) - 1) & !((1 << PAGE_OFFSET_BITS) - 1);
+    const FLAGS_MASK: u64 = !Self::ADDRESS_MASK;
 
-    pub fn new(address: usize, flags: PageTableFlags) -> Self {
-        Self((address & Self::ADDRESS_MASK) | (flags ^ PageTableFlags::EXECUTABLE).bits())
+    pub fn new(address: PhysAddr, flags: PageTableFlags) -> Self {
+        Self(address.as_u64() | (flags ^ PageTableFlags::EXECUTABLE).bits())
     }
 
     pub fn non_present() -> Self {
         Self(0)
     }
 
-    pub fn address(&self) -> usize {
-        self.0 & Self::ADDRESS_MASK
+    pub fn address(&self) -> PhysAddr {
+        // SAFETY: Address mask ensures that 52..64 are 0.
+        unsafe { PhysAddr::new_unsafe(self.0 & Self::ADDRESS_MASK) }
     }
 
     pub fn flags(&self) -> PageTableFlags {
@@ -110,7 +117,7 @@ impl PageTableEntry {
     }
 
     pub fn set_flags(&mut self, flags: PageTableFlags) {
-        self.0 = self.address() | (flags ^ PageTableFlags::EXECUTABLE).bits();
+        self.0 = self.address().as_u64() | (flags ^ PageTableFlags::EXECUTABLE).bits();
     }
 }
 
@@ -126,7 +133,7 @@ impl fmt::Debug for PageTableEntry {
 
 bitflags! {
     #[derive(Clone, Copy, Default, Eq, PartialEq)]
-    pub struct PageTableFlags: usize {
+    pub struct PageTableFlags: u64 {
         const PRESENT = 1 << 0;
         const WRITABLE = 1 << 1;
         const USER = 1 << 2;

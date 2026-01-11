@@ -8,6 +8,8 @@ pub mod instructions {
     }
 }
 
+pub use x86_64::addr as addr;
+
 pub mod align_marker;
 
 pub mod protocol;

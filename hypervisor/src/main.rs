@@ -4,7 +4,7 @@ use std::{env, fs::File, io::Read, mem, ptr::null_mut};
 use kvm_bindings::{KVM_MEM_LOG_DIRTY_PAGES, kvm_userspace_memory_region};
 use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
 
-use arch_x86_64::{protocol, pte};
+use arch_x86_64::{addr::PhysAddr, protocol, pte};
 use goblin::elf::{Elf, program_header};
 use nix::libc;
 
@@ -61,22 +61,22 @@ fn setup_physical_memory(vm: &VmFd) -> &mut [u8] {
 
 fn setup_virtual_table(memory: &mut [u8]) -> u64 {
     use pte::PageTableFlags as fs;
-    const PAGE_TABLE_4: usize = 0x1000;
-    const PAGE_TABLE_3: usize = 0x2000;
-    const PAGE_TABLE_2: usize = 0x3000;
+    const PAGE_TABLE_4: u64 = 0x1000;
+    const PAGE_TABLE_3: u64 = 0x2000;
+    const PAGE_TABLE_2: u64 = 0x3000;
 
     let (pref, pages, suff) = unsafe { memory.align_to_mut() };
     assert_eq!((pref.len(), suff.len()), (0, 0));
 
     let mapping_flags = fs::PRESENT | fs::WRITABLE | fs::EXECUTABLE;
     let pt4 = pte::PageTable::new_non_present(&mut pages[1]);
-    pt4[0] = pte::PageTableEntry::new(PAGE_TABLE_3, mapping_flags);
+    pt4[0] = pte::PageTableEntry::new(PhysAddr::new(PAGE_TABLE_3), mapping_flags);
     let pt3 = pte::PageTable::new_non_present(&mut pages[2]);
-    pt3[0] = pte::PageTableEntry::new(PAGE_TABLE_2, mapping_flags);
+    pt3[0] = pte::PageTableEntry::new(PhysAddr::new(PAGE_TABLE_2), mapping_flags);
     let pt2 = pte::PageTable::new_non_present(&mut pages[3]);
-    pt2[0] = pte::PageTableEntry::new(0x0, mapping_flags | fs::HUGE);
-    pt2[1] = pte::PageTableEntry::new(0x200000, mapping_flags | fs::HUGE);
-    pt2[2] = pte::PageTableEntry::new(0x400000, mapping_flags | fs::HUGE);
+    pt2[0] = pte::PageTableEntry::new(PhysAddr::new(0x0), mapping_flags | fs::HUGE);
+    pt2[1] = pte::PageTableEntry::new(PhysAddr::new(0x200000), mapping_flags | fs::HUGE);
+    pt2[2] = pte::PageTableEntry::new(PhysAddr::new(0x400000), mapping_flags | fs::HUGE);
 
     PAGE_TABLE_4 as u64
 }
