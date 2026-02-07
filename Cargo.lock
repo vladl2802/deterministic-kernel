@@ -67,6 +67,7 @@ name = "hypervisor"
 version = "0.1.0"
 dependencies = [
  "arch_x86_64",
+ "common",
  "goblin",
  "kvm-bindings",
  "kvm-ioctls",

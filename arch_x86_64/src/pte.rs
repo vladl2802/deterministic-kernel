@@ -194,7 +194,7 @@ impl fmt::Display for PageTableFlags {
 const PHYS_ADDRESS_BITS: usize = 52;
 
 const PAGE_OFFSET_BITS: usize = 12;
-const PAGE_TABLE_INDEX_BITS: usize = 9;
+pub const PAGE_TABLE_INDEX_BITS: usize = 9;
 pub const PAGE_TABLE_ENTRY_COUNT: usize = 1 << PAGE_TABLE_INDEX_BITS;
 
 pub const L0_PAGE_SIZE: usize = 1 << PAGE_OFFSET_BITS; // 4KiB
