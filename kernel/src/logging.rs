@@ -3,10 +3,7 @@ use core::{
     fmt::{self, Write},
 };
 
-use arch_x86_64::{
-    instructions::{self, port},
-    protocol,
-};
+use arch_x86_64::instructions::{self, port};
 use log;
 
 // In general there is an idea that hypervisor will need to parse kernel logs
@@ -14,8 +11,12 @@ use log;
 
 struct LogCollector {
     level: log::Level,
-    logger: PortLogger,
+    logger: UnsafeCell<Option<PortLogger>>,
 }
+
+// it's not true, but is required for now
+unsafe impl Send for LogCollector {}
+unsafe impl Sync for LogCollector {}
 
 // UnsafeCell is used here until SpinLock is implemented
 // as long as kernel does not have any concurrent actions
@@ -31,11 +32,24 @@ unsafe impl Sync for PortLogger {}
 struct PortWritter(port::Port<u8>);
 
 impl LogCollector {
-    const fn new(port: u16) -> Self {
+    const fn new() -> Self {
         LogCollector {
             level: log::Level::Trace,
-            logger: PortLogger::new(port),
+            logger: UnsafeCell::new(None),
         }
+    }
+
+    fn finish_init(&self, port: u16) {
+        let logger = unsafe { self.logger.get().as_mut().unwrap() };
+        *logger = Some(PortLogger::new(port));
+    }
+
+    // Must only be called after finish_init
+    unsafe fn logger(&self) -> &PortLogger {
+        unsafe { self.logger.get().as_ref() }
+            .unwrap()
+            .as_ref()
+            .unwrap()
     }
 }
 
@@ -57,14 +71,14 @@ impl log::Log for LogCollector {
         let tsc = unsafe { instructions::rdtsc() };
 
         let log_line = format_args!("{}-[{}]: {}", tsc, record.level(), record.args());
-        self.logger.log(&log_line);
+        unsafe { self.logger() }.log(&log_line);
     }
 
     fn flush(&self) {}
 }
 
 impl PortLogger {
-    pub const fn new(port: u16) -> Self {
+    pub fn new(port: u16) -> Self {
         Self(UnsafeCell::new(PortWritter::new(port)))
     }
 
@@ -75,7 +89,7 @@ impl PortLogger {
 }
 
 impl PortWritter {
-    pub const fn new(port: u16) -> Self {
+    pub fn new(port: u16) -> Self {
         Self(port::Port::new(port))
     }
 }
@@ -89,10 +103,11 @@ impl Write for PortWritter {
     }
 }
 
-pub(crate) fn init() {
+pub(crate) fn init(log_port: u16) {
+    LOG_COLLECTOR.finish_init(log_port);
     log::set_logger(&LOG_COLLECTOR)
         .map(|()| log::set_max_level(log::LevelFilter::Trace))
         .expect("couldn't set log collector");
 }
 
-static LOG_COLLECTOR: LogCollector = LogCollector::new(protocol::LOG_PORT);
+static LOG_COLLECTOR: LogCollector = LogCollector::new();

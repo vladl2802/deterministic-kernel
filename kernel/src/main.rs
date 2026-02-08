@@ -5,8 +5,8 @@ mod logging;
 
 use core;
 
-use arch_x86_64::instructions;
-use log::{error, debug};
+use arch_x86_64::{instructions, protocol::BootInfo};
+use log::{info, error, debug};
 
 unsafe fn halt() -> ! {
     loop {
@@ -21,13 +21,15 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { halt() }
 }
 
-fn init() {
-    logging::init();
+fn init(boot_info: &'static BootInfo) {
+    logging::init(boot_info.logging_port);
+
+    info!("kernel run salt is: {:X}", boot_info.salt);
 }
 
 #[inline(never)]
-fn kernel_main() -> ! {
-    init();
+fn kernel_main(boot_info: &'static BootInfo) -> ! {
+    init(boot_info);
 
     let mut port = instructions::port::Port::new(0x3f8);
     unsafe { port.write(b'A') }
@@ -39,14 +41,12 @@ fn kernel_main() -> ! {
 
 #[unsafe(no_mangle)]
 #[allow(unused)]
-#[inline(never)]
+#[unsafe(naked)]
 pub extern "C" fn _start() -> ! {
-    unsafe {
-        core::arch::asm!("
-            call {main}
-            ",
-            main = sym kernel_main,
-            options(noreturn)
-        )
-    }
+    // hypervisor passes BootInfo pointer in RDI
+    core::arch::naked_asm!("
+        call {main}
+        ",
+        main = sym kernel_main
+    )
 }

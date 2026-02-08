@@ -27,6 +27,7 @@ use nix::libc;
 // TODO: unwrap -> anyhow or something similar
 
 const MEM_SIZE: u64 = 6 * 1024 * 1024;
+const LOG_PORT: u16 = 0xE9;
 
 struct Frame<'a, const SIZE: usize>
 where
@@ -229,6 +230,7 @@ struct AddressSpaceState {
     pt4: PhysAddr,
     entry: VirtAddr,
     stack_top: VirtAddr,
+    boot_info: VirtAddr,
 }
 
 impl AddressSpaceState {
@@ -276,14 +278,18 @@ impl AddressSpaceState {
         let entry = Self::setup_kernel(kernel_binary_memory, &mut pt2, kernel);
 
         let pt1_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt1 = pt2.allocate_pte(pt1_frame, Self::stack_flags() | Self::boot_info_flags()).unwrap();
+        let mut pt1 = pt2
+            .allocate_pte(pt1_frame, Self::stack_flags() | Self::boot_info_flags())
+            .unwrap();
 
         let stack = Self::setup_stack(&mut pt1, &frame_alloc);
+        let boot_info = Self::setup_boot_info(&mut pt1, &frame_alloc);
 
         Self {
             pt4: pt4_address,
             entry,
             stack_top: stack + L0Page::SIZE,
+            boot_info,
         }
     }
 
@@ -295,17 +301,41 @@ impl AddressSpaceState {
         let end = kernel.needed_memory().unwrap().end;
         let end = end.align_up(L1HugePage::SIZE);
         for addr in (0..end.as_u64()).step_by(L1HugePage::SIZE as usize) {
-            pt2.allocate(PhysAddr::new(addr), Self::kernel_flags() | pte::PageTableFlags::HUGE)
-                .unwrap();
+            pt2.allocate(
+                PhysAddr::new(addr),
+                Self::kernel_flags() | pte::PageTableFlags::HUGE,
+            )
+            .unwrap();
         }
         kernel.load(memory);
 
         VirtAddr::new(kernel.entry())
     }
 
-    fn setup_stack(pt1: &mut AllocatingPageTable, frame_alloc: &dyn FrameAllocator<L0_PAGE_SIZE>) -> VirtAddr {
+    fn setup_stack(
+        pt1: &mut AllocatingPageTable,
+        frame_alloc: &dyn FrameAllocator<L0_PAGE_SIZE>,
+    ) -> VirtAddr {
         let frame = frame_alloc.alloc_frame().unwrap();
         pt1.allocate(frame.phys, Self::stack_flags()).unwrap()
+    }
+
+    fn setup_boot_info(
+        pt1: &mut AllocatingPageTable,
+        frame_alloc: &dyn FrameAllocator<L0_PAGE_SIZE>,
+    ) -> VirtAddr {
+        let frame = frame_alloc.alloc_frame().unwrap();
+        let virt = pt1.allocate(frame.phys, Self::boot_info_flags()).unwrap();
+
+        let boot_info = protocol::BootInfo {
+            logging_port: LOG_PORT,
+            memory_regions: &[],
+            salt: 0xDEADBEEF,
+        };
+        let bytes = frame.page.bytes_mut();
+        unsafe { (bytes.as_ptr() as *mut protocol::BootInfo).write(boot_info) };
+
+        virt
     }
 }
 
@@ -393,6 +423,7 @@ fn setup_vm(kvm: &Kvm, kernel_binary: &str) -> (VmFd, VcpuFd) {
 
     let mut regs = vcpu.get_regs().unwrap();
     regs.rip = address_space.entry.as_u64();
+    regs.rdi = address_space.boot_info.as_u64();
     regs.rsp = address_space.stack_top.as_u64();
     regs.rflags = 0x2;
     vcpu.set_regs(&regs).unwrap();
@@ -448,7 +479,7 @@ fn main() {
                 );
             }
             VcpuExit::IoOut(addr, data) => {
-                if addr == protocol::LOG_PORT {
+                if addr == LOG_PORT {
                     collector.add_bytes(data);
                 } else {
                     println!(
