@@ -17,8 +17,8 @@ use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
 
 use arch_x86_64::{
     addr::{PhysAddr, VirtAddr},
-    protocol,
-    pte::{self, L0_PAGE_SIZE, L0Page, L1HugePage},
+    frage::{self, L0_PAGE_SIZE, L0Page, L1HugePage},
+    protocol, pte,
 };
 use common::{align_marker::AlignMarker, try_alignment};
 use goblin::elf::{Elf, program_header};
@@ -31,18 +31,18 @@ const LOG_PORT: u16 = 0xE9;
 
 struct Frame<'a, const SIZE: usize>
 where
-    pte::PageAligment: AlignMarker<SIZE>,
+    frage::PageAligment: AlignMarker<SIZE>,
 {
     phys: PhysAddr,
-    page: &'a mut pte::Page<SIZE>,
+    page: &'a mut frage::Page<SIZE>,
 }
 
 impl<'a, const SIZE: usize> Frame<'a, SIZE>
 where
-    pte::PageAligment: AlignMarker<SIZE>,
+    frage::PageAligment: AlignMarker<SIZE>,
 {
-    fn new(phys: PhysAddr, page: &'a mut pte::Page<SIZE>) -> Self {
-        assert!(phys.is_aligned(pte::Page::SIZE));
+    fn new(phys: PhysAddr, page: &'a mut frage::Page<SIZE>) -> Self {
+        assert!(phys.is_aligned(frage::Page::SIZE));
         Self { phys, page }
     }
 }
@@ -100,7 +100,7 @@ impl<'a> AllocatingPageTable<'a> {
 
 trait FrameAllocator<const SIZE: usize>
 where
-    pte::PageAligment: AlignMarker<SIZE>,
+    frage::PageAligment: AlignMarker<SIZE>,
 {
     fn alloc_frame(&self) -> Option<Frame<'_, SIZE>>;
 }

@@ -2,7 +2,7 @@ use core::ops::Range;
 
 use crate::{
     addr::{PhysAddr, VirtAddr},
-    pte::L0Page,
+    frage::L0Page,
 };
 
 #[derive(Clone, Copy, Debug)]
