@@ -1,4 +1,4 @@
-use core::ops::Range;
+use core::{fmt, ops::Range};
 
 use crate::{
     addr::{PhysAddr, VirtAddr},
@@ -11,8 +11,34 @@ pub const HIT_PORT: u16 = 0xF0;
 // TODO: Should become #[non_exhaustive]
 pub struct BootInfo<'a> {
     pub logging_port: u16,
+    pub event_port: u16,
     pub memory_regions: &'a [LinearPhysMapping],
     pub salt: u64,
+}
+
+#[non_exhaustive]
+#[repr(u8)]
+#[derive(Clone, Copy, Debug)]
+pub enum KernelEvent {
+    Panic = 0,
+    // OutOfMemory = 1,
+}
+
+impl KernelEvent {
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(KernelEvent::Panic),
+            _ => None
+        }
+    }
+}
+
+impl fmt::Display for KernelEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KernelEvent::Panic => f.write_str("Panic"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

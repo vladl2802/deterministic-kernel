@@ -2,6 +2,7 @@
 #![no_main]
 
 mod common;
+mod event;
 mod logging;
 
 use core;
@@ -13,11 +14,13 @@ use log::{debug, error, info};
 #[inline(never)]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     error!("PANIC: {info}");
+    event::send(event::KernelEvent::Panic);
     unsafe { common::halt() }
 }
 
 fn init(boot_info: &'static BootInfo) {
     logging::init(boot_info.logging_port);
+    event::init(boot_info.event_port);
 
     info!("kernel run salt is: {:X}", boot_info.salt);
 }

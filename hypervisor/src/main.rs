@@ -23,13 +23,14 @@ use arch_x86_64::{
 use common::{align_marker::AlignMarker, try_alignment};
 use goblin::elf::{Elf, program_header};
 use nix::libc;
-use tracing::{Level, span, trace};
+use tracing::{Level, warn, span, trace};
 use tracing_subscriber;
 
 // TODO: unwrap -> anyhow or something similar
 
 const MEM_SIZE: u64 = 6 * 1024 * 1024;
 const LOG_PORT: u16 = 0xE9;
+const EVENT_PORT: u16 = 0xEA;
 
 struct Frame<'a, const SIZE: usize>
 where
@@ -356,6 +357,7 @@ impl AddressSpaceState {
 
         let boot_info = protocol::BootInfo {
             logging_port: LOG_PORT,
+            event_port: EVENT_PORT,
             memory_regions: &[],
             salt: 0xDEADBEEF,
         };
@@ -517,6 +519,13 @@ fn main() {
             }
             VcpuExit::IoOut(addr, data) => match addr {
                 LOG_PORT => collector.add_bytes(data),
+                EVENT_PORT => {
+                    let formatted_ev = match protocol::KernelEvent::from_byte(data[0]) {
+                        Some(val) => format!("{}", val),
+                        None => "Unknown".to_owned(),
+                    };
+                    warn!( "Kernel event {:#x} ({})", data[0], formatted_ev);
+                },
                 protocol::HIT_PORT => trace!(hit = data[0]),
                 _ => trace!(
                     "Recieved port out exit: address={:#x}, data={}",
