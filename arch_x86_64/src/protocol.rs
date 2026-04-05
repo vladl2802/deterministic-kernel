@@ -5,6 +5,8 @@ use crate::{
     frage::L0Page,
 };
 
+pub const HIT_PORT: u16 = 0xF0;
+
 #[derive(Clone, Copy, Debug)]
 // TODO: Should become #[non_exhaustive]
 pub struct BootInfo<'a> {

@@ -1,24 +1,19 @@
 #![no_std]
 #![no_main]
 
+mod common;
 mod logging;
 
 use core;
 
-use arch_x86_64::{instructions, protocol::BootInfo};
-use log::{info, error, debug};
-
-unsafe fn halt() -> ! {
-    loop {
-        instructions::hlt()
-    }
-}
+use arch_x86_64::protocol::BootInfo;
+use log::{debug, error, info};
 
 #[panic_handler]
 #[inline(never)]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    error!("PANIC");
-    unsafe { halt() }
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    error!("PANIC: {info}");
+    unsafe { common::halt() }
 }
 
 fn init(boot_info: &'static BootInfo) {
@@ -31,12 +26,13 @@ fn init(boot_info: &'static BootInfo) {
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     init(boot_info);
 
-    let mut port = instructions::port::Port::new(0x3f8);
-    unsafe { port.write(b'A') }
+    common::hit(b'A');
     debug!("first log is HERE!");
-    unsafe { port.write(b'B') }
+    common::hit(b'B');
 
-    unsafe { halt() }
+    panic!("I want to panic");
+
+    unsafe { common::halt() }
 }
 
 #[unsafe(no_mangle)]

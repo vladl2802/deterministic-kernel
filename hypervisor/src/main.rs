@@ -23,6 +23,8 @@ use arch_x86_64::{
 use common::{align_marker::AlignMarker, try_alignment};
 use goblin::elf::{Elf, program_header};
 use nix::libc;
+use tracing::{Level, span, trace};
+use tracing_subscriber;
 
 // TODO: unwrap -> anyhow or something similar
 
@@ -72,15 +74,19 @@ impl<'a> AllocatingPageTable<'a> {
     }
 
     fn allocate(&mut self, phys: PhysAddr, flags: pte::PageTableFlags) -> Option<VirtAddr> {
+        let span = span!(Level::TRACE, "AllocPTE.allocate");
+        let _enter = span.enter();
         let index = self.allocated as usize;
-        if index < pte::PAGE_TABLE_ENTRY_COUNT {
+        let res = if index < pte::PAGE_TABLE_ENTRY_COUNT {
             self.pte[index] = pte::PageTableEntry::new(phys, flags);
             self.allocated += 1;
             let virt = self.child_virt_addr_base(self.allocated - 1);
             Some(virt)
         } else {
             None
-        }
+        };
+        trace!(phys = ?phys, flags = %flags, base = ?res);
+        res
     }
 
     fn allocate_pte(
@@ -254,6 +260,8 @@ impl AddressSpaceState {
     }
 
     fn setup(memory: &mut [MaybeUninit<u8>], kernel: &KernelBinary) -> Self {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup");
+        let _enter = span.enter();
         let mut kernel_binary_range = kernel.needed_memory().unwrap();
         kernel_binary_range.end = kernel_binary_range.end.align_up(L1HugePage::SIZE);
         assert!(
@@ -288,7 +296,7 @@ impl AddressSpaceState {
         Self {
             pt4: pt4_address,
             entry,
-            stack_top: stack + L0Page::SIZE,
+            stack_top: stack.end,
             boot_info,
         }
     }
@@ -298,6 +306,8 @@ impl AddressSpaceState {
         pt2: &mut AllocatingPageTable,
         kernel: &KernelBinary,
     ) -> VirtAddr {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup_kernel");
+        let _enter = span.enter();
         let end = kernel.needed_memory().unwrap().end;
         let end = end.align_up(L1HugePage::SIZE);
         for addr in (0..end.as_u64()).step_by(L1HugePage::SIZE as usize) {
@@ -315,15 +325,32 @@ impl AddressSpaceState {
     fn setup_stack(
         pt1: &mut AllocatingPageTable,
         frame_alloc: &dyn FrameAllocator<L0_PAGE_SIZE>,
-    ) -> VirtAddr {
-        let frame = frame_alloc.alloc_frame().unwrap();
-        pt1.allocate(frame.phys, Self::stack_flags()).unwrap()
+    ) -> Range<VirtAddr> {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup_stack");
+        let _enter = span.enter();
+        let pages = 4u64;
+        let mut base = None;
+        for _ in 0..pages {
+            let frame = frame_alloc.alloc_frame().unwrap();
+            let virt = pt1.allocate(frame.phys, Self::stack_flags()).unwrap();
+            if base.is_none() {
+                base = Some(virt);
+            }
+        }
+        let range = Range {
+            start: base.unwrap(),
+            end: base.unwrap() + L0Page::SIZE * pages,
+        };
+        trace!(stack_base = ?base, stack = ?range);
+        range
     }
 
     fn setup_boot_info(
         pt1: &mut AllocatingPageTable,
         frame_alloc: &dyn FrameAllocator<L0_PAGE_SIZE>,
     ) -> VirtAddr {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup_bootinfo");
+        let _enter = span.enter();
         let frame = frame_alloc.alloc_frame().unwrap();
         let virt = pt1.allocate(frame.phys, Self::boot_info_flags()).unwrap();
 
@@ -340,6 +367,8 @@ impl AddressSpaceState {
 }
 
 fn setup_sregs(vcpu: &VcpuFd, pt4: PhysAddr) {
+    let span = span!(Level::TRACE, "AddressSpaceState.setup_sregs");
+    let _enter = span.enter();
     let mut sregs = vcpu.get_sregs().unwrap();
 
     let code_seg = kvm_bindings::kvm_segment {
@@ -396,6 +425,8 @@ fn setup_sregs(vcpu: &VcpuFd, pt4: PhysAddr) {
 }
 
 fn setup_vm(kvm: &Kvm, kernel_binary: &str) -> (VmFd, VcpuFd) {
+    let span = span!(Level::TRACE, "AddressSpaceState.setup_vm");
+    let _enter = span.enter();
     let vm = kvm.create_vm().unwrap();
     // maybe not needed actually?
     // https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt says that
@@ -462,6 +493,10 @@ impl KernelLogCollector {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(Level::TRACE)
+        .init();
+
     let path_to_kernel_binary = env::args().nth(1).unwrap();
 
     let kvm = Kvm::new().unwrap();
@@ -471,23 +506,28 @@ fn main() {
     let mut collector = KernelLogCollector::new();
 
     loop {
-        match vcpu_fd.run().expect("run failed") {
+        let exit_reason = vcpu_fd.run().expect("run failed");
+        // trace!(exit_reason = ?exit_reason);
+        match exit_reason {
             VcpuExit::IoIn(addr, data) => {
                 println!(
                     "Received an I/O in exit. Address: {:#x}. Data: {:#x}",
                     addr, data[0],
                 );
             }
-            VcpuExit::IoOut(addr, data) => {
-                if addr == LOG_PORT {
-                    collector.add_bytes(data);
-                } else {
-                    println!(
-                        "Received an I/O out exit. Address: {:#x}. Data: {:#x}",
-                        addr, data[0],
-                    );
-                }
-            }
+            VcpuExit::IoOut(addr, data) => match addr {
+                LOG_PORT => collector.add_bytes(data),
+                protocol::HIT_PORT => trace!(hit = data[0]),
+                _ => trace!(
+                    "Recieved port out exit: address={:#x}, data={}",
+                    addr,
+                    if data.len() == 1 {
+                        format!("{:#x}", data[0])
+                    } else {
+                        format!("{:#x?}", data)
+                    },
+                ),
+            },
             VcpuExit::MmioRead(addr, _data) => {
                 println!("Received an MMIO Read Request for the address {:#x}.", addr,);
             }
