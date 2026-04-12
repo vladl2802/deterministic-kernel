@@ -23,7 +23,7 @@ use arch_x86_64::{
 use common::{align_marker::AlignMarker, try_alignment};
 use goblin::elf::{Elf, program_header};
 use nix::libc;
-use tracing::{Level, warn, span, trace};
+use tracing::{Level, span, trace, warn};
 use tracing_subscriber;
 
 // TODO: unwrap -> anyhow or something similar
@@ -478,7 +478,7 @@ impl KernelLogCollector {
     }
 
     fn add_byte(&mut self, byte: u8) {
-        if byte == '\n' as u8 {
+        if byte == b'\n' {
             self.flush();
         } else {
             self.buf.push(byte);
@@ -521,11 +521,11 @@ fn main() {
                 LOG_PORT => collector.add_bytes(data),
                 EVENT_PORT => {
                     let formatted_ev = match protocol::KernelEvent::from_byte(data[0]) {
-                        Some(val) => format!("{}", val),
+                        Some(val) => format!("{val}"),
                         None => "Unknown".to_owned(),
                     };
-                    warn!( "Kernel event {:#x} ({})", data[0], formatted_ev);
-                },
+                    warn!("Kernel event {:#x} ({})", data[0], formatted_ev);
+                }
                 protocol::HIT_PORT => trace!(hit = data[0]),
                 _ => trace!(
                     "Recieved port out exit: address={:#x}, data={}",
@@ -538,10 +538,10 @@ fn main() {
                 ),
             },
             VcpuExit::MmioRead(addr, _data) => {
-                println!("Received an MMIO Read Request for the address {:#x}.", addr,);
+                println!("Received an MMIO Read Request for the address {:#x}.", addr);
             }
             VcpuExit::MmioWrite(addr, _data) => {
-                println!("Received an MMIO Write Request to the address {:#x}.", addr,);
+                println!("Received an MMIO Write Request to the address {:#x}.", addr);
                 let dirty_pages_bitmap = vm.get_dirty_log(0, MEM_SIZE as usize).unwrap();
                 let dirty_pages = dirty_pages_bitmap
                     .into_iter()
@@ -549,9 +549,7 @@ fn main() {
                     .fold(0, |dirty_page_count, i| dirty_page_count + i);
                 assert_eq!(dirty_pages, 1);
             }
-            VcpuExit::Hlt => {
-                break;
-            }
+            VcpuExit::Hlt => break,
             VcpuExit::InternalError => {
                 // kvm-ioctl crate hides internal error details
                 // afaik because it is not a stable api
