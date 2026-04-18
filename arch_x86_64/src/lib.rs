@@ -12,6 +12,7 @@ pub mod instructions {
 
 pub use x86_64::addr;
 
+pub mod block;
 pub mod protocol;
 pub mod pte;
 pub mod frage;

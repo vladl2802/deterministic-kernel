@@ -8,14 +8,17 @@ use common::assert_alignment;
 
 use crate::{addr::PhysAddr, frage::L0Page};
 
+pub use x86_64::structures::paging::page_table::{PageTableIndex, PageTableLevel};
+
 #[repr(transparent)]
 pub struct PageTable([PageTableEntry; PAGE_TABLE_ENTRY_COUNT]);
 
 impl PageTable {
     pub fn new_non_present(page: &mut L0Page) -> &mut Self {
-        let uninit = assert_alignment!(page.bytes_mut().align_to_uninit_mut::<PageTableEntry>())
-            .as_mut_array::<PAGE_TABLE_ENTRY_COUNT>()
-            .unwrap();
+        let uninit: &mut [core::mem::MaybeUninit<PageTableEntry>; 512] =
+            assert_alignment!(page.bytes_mut().align_to_uninit_mut::<PageTableEntry>())
+                .as_mut_array::<PAGE_TABLE_ENTRY_COUNT>()
+                .unwrap();
         uninit.iter_mut().for_each(|pte| {
             pte.write(PageTableEntry::non_present());
         });
@@ -104,6 +107,8 @@ bitflags! {
         const AVAILABLE_2 = 1 << 11;
 
         const EXECUTABLE = 1 << 63;
+
+        const ACCESS_FLAGS = Self::USER.bits() | Self::WRITABLE.bits() | Self::EXECUTABLE.bits();
     }
 }
 
