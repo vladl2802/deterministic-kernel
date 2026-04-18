@@ -16,3 +16,4 @@ pub mod block;
 pub mod protocol;
 pub mod pte;
 pub mod frage;
+pub mod registers;
