@@ -2,6 +2,8 @@ use core::{mem::{self, ManuallyDrop}, ptr};
 
 use arch_x86_64::{addr::PhysAddr, frage::{L0Frame, L0Page}, protocol::LinearPhysMapping};
 
+// TODO: deallocate on drop
+
 pub struct OwnedFrame {
     frame: L0Frame,
 }

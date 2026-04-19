@@ -1,6 +1,10 @@
 #![no_std]
 #![no_main]
 
+#![feature(alloc_error_handler)]
+
+extern crate alloc;
+
 mod common;
 mod event;
 mod logging;
@@ -8,9 +12,10 @@ mod memory;
 
 use core;
 
-use arch_x86_64::{addr::VirtAddr, protocol::BootInfo, pte::PageTableFlags};
+use alloc::vec::Vec;
+use arch_x86_64::{protocol::BootInfo, pte::PageTableFlags};
 use log::{debug, error, info};
-use memory::{BumpAllocator, FrameAllocator, MemoryManager};
+use memory::{BumpAllocator, MemoryManager};
 
 #[panic_handler]
 #[inline(never)]
@@ -20,28 +25,22 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     unsafe { common::halt() }
 }
 
-fn init(boot_info: &'static BootInfo) {
+fn init(boot_info: &'static BootInfo) -> BumpAllocator<'static> {
     logging::init(boot_info.logging_port);
     event::init(boot_info.event_port);
-
-    info!("kernel run salt is: {:X}", boot_info.salt);
+    memory::init(boot_info)
 }
 
 #[inline(never)]
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    init(boot_info);
+    let mut mm = init(boot_info);
 
     info!("inited with boot_info = {:?}", boot_info);
+    info!("kernel run salt is: {:X}", boot_info.salt);
 
     common::hit(b'A');
     debug!("first log is HERE!");
     common::hit(b'B');
-
-    let region = &boot_info.memory_region;
-    let frame_alloc = FrameAllocator::new(region, boot_info.first_usable_phys);
-    let mut mm = unsafe {
-        BumpAllocator::with_current_pml4(region, frame_alloc, VirtAddr::new(0x0000_4000_0000_0000))
-    };
 
     let handle = mm
         .mmap(4096, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
@@ -51,6 +50,12 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     assert_eq!(val, 0xAB);
     info!("memory manager ok: {:#x}", val);
     mm.munmap(handle);
+
+    let mut vec = Vec::with_capacity(10);
+    for _ in 0..20 {
+        vec.push(1);
+    }
+    info!("len = {}, addr = {:p}", vec.len(), vec.as_ptr());
 
     panic!("I want to panic");
 

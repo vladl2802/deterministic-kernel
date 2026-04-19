@@ -9,6 +9,8 @@ use arch_x86_64::{
 
 use super::frame_allocator::{FrameAllocator, OwnedFrame};
 
+// TODO: unmap in drop
+
 pub struct AddressSpace<'a> {
     phys_mapping: &'a LinearPhysMapping,
     pml4: OwnedFrame,
