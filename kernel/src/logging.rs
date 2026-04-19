@@ -3,6 +3,8 @@ use core::{
     fmt::{self, Write},
 };
 
+use crate::single_thread_lock::SingleThreadLock;
+
 use arch_x86_64::instructions::{self, port};
 use log;
 
@@ -11,7 +13,7 @@ use log;
 
 struct LogCollector {
     level: log::Level,
-    logger: UnsafeCell<Option<PortLogger>>,
+    logger: SingleThreadLock<Option<PortLogger>>,
 }
 
 // it's not true, but is required for now
@@ -35,21 +37,21 @@ impl LogCollector {
     const fn new() -> Self {
         LogCollector {
             level: log::Level::Trace,
-            logger: UnsafeCell::new(None),
+            logger: SingleThreadLock::new_unlocked(None),
         }
     }
 
     fn finish_init(&self, port: u16) {
-        let logger = unsafe { self.logger.get().as_mut().unwrap() };
-        *logger = Some(PortLogger::new(port));
+        self.logger
+            .with_lock(|logger| *logger = Some(PortLogger::new(port)));
     }
 
     // Must only be called after finish_init
-    unsafe fn logger(&self) -> &PortLogger {
-        unsafe { self.logger.get().as_ref() }
-            .unwrap()
-            .as_ref()
-            .unwrap()
+    fn with_logger<R>(&self, body: impl FnOnce(&mut PortLogger) -> R) -> R {
+        self.logger.with_lock(|logger| {
+            let logger = logger.as_mut().expect("log collector not initialized");
+            body(logger)
+        })
     }
 }
 
@@ -71,7 +73,7 @@ impl log::Log for LogCollector {
         let tsc = unsafe { instructions::rdtsc() };
 
         let log_line = format_args!("{}-[{}]: {}", tsc, record.level(), record.args());
-        unsafe { self.logger() }.log(&log_line);
+        self.with_logger(|logger| logger.log(&log_line));
     }
 
     fn flush(&self) {}

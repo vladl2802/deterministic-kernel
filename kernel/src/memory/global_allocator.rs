@@ -1,59 +1,11 @@
 use core::{
     alloc::{GlobalAlloc, Layout},
-    any,
-    cell::{Cell, UnsafeCell},
     ptr,
 };
 
+use crate::single_thread_lock::SingleThreadLock;
+
 use buddy_system_allocator::Heap;
-
-struct SingleThreadLock<T> {
-    locked: Cell<bool>,
-    underlying: UnsafeCell<T>,
-}
-
-// Because it is single-threaded we do not need any syncronization
-unsafe impl<T> Send for SingleThreadLock<T> {}
-unsafe impl<T> Sync for SingleThreadLock<T> {}
-
-impl<T> SingleThreadLock<T> {
-    const fn new_unlocked(underlying: T) -> Self {
-        Self {
-            locked: Cell::new(false),
-            underlying: UnsafeCell::new(underlying),
-        }
-    }
-
-    #[track_caller]
-    fn lock(&self) {
-        if self.locked.replace(true) {
-            panic!(
-                "Lock on already locked object (addr = {:p}, type = {})",
-                ptr::from_ref(self),
-                any::type_name::<T>(),
-            );
-        }
-    }
-
-    #[track_caller]
-    fn unlock(&self) {
-        if !self.locked.replace(false) {
-            panic!(
-                "Unlock on already unlocked object (addr = {:p}, type = {})",
-                ptr::from_ref(self),
-                any::type_name::<T>(),
-            )
-        }
-    }
-
-    #[track_caller]
-    fn with_lock<R>(&self, body: impl FnOnce(&mut T) -> R) -> R {
-        self.lock();
-        let result = body(unsafe { &mut *self.underlying.get() });
-        self.unlock();
-        result
-    }
-}
 
 type Allocator = Heap<32>;
 

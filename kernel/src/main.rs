@@ -9,10 +9,11 @@ mod common;
 mod event;
 mod logging;
 mod memory;
+mod single_thread_lock;
 
 use core;
-
 use alloc::vec::Vec;
+
 use arch_x86_64::{protocol::BootInfo, pte::PageTableFlags};
 use log::{debug, error, info};
 use memory::{BumpAllocator, MemoryManager};
