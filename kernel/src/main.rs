@@ -2,15 +2,19 @@
 #![no_main]
 
 #![feature(alloc_error_handler)]
+#![feature(abi_x86_interrupt)]
 
 extern crate alloc;
 
 mod common;
 mod event;
+mod gdt;
+mod interrupts;
 mod late_init;
 mod logging;
 mod memory;
 mod single_thread_lock;
+mod tss;
 
 use core;
 use alloc::vec::Vec;
@@ -30,7 +34,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 fn init(boot_info: &'static BootInfo) -> BumpAllocator<'static> {
     logging::init(boot_info.logging_port);
     event::init(boot_info.event_port);
-    memory::init(boot_info)
+    let mut mm = memory::init(boot_info);
+    let tss = tss::init(&mut mm);
+    gdt::init(tss);
+    interrupts::init();
+    mm
 }
 
 #[inline(never)]
@@ -58,6 +66,19 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vec.push(1);
     }
     info!("len = {}, addr = {:p}", vec.len(), vec.as_ptr());
+
+    unsafe {
+        let mut rax = 10;
+        let rbx: u64 = 0;
+        let mut rdx: u64 = 0;
+        core::arch::asm!(
+            "div {divisor}",
+            divisor = in(reg) rbx,
+            inout("rax") rax,
+            inout("rdx") rdx,
+        );
+        info!("I will wait for you three: {rax} {rbx} {rdx}");
+    }
 
     panic!("I want to panic");
 
