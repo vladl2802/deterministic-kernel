@@ -11,6 +11,7 @@ pub mod instructions {
 }
 
 pub use x86_64::addr;
+pub use x86_64::structures;
 
 pub mod block;
 pub mod protocol;
