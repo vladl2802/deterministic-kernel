@@ -7,6 +7,7 @@ extern crate alloc;
 
 mod common;
 mod event;
+mod late_init;
 mod logging;
 mod memory;
 mod single_thread_lock;

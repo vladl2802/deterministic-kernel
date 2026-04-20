@@ -3,25 +3,24 @@ use core::{
     ptr,
 };
 
-use crate::single_thread_lock::SingleThreadLock;
+use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
 
 use buddy_system_allocator::Heap;
 
 type Allocator = Heap<32>;
 
-struct LockedHeap(SingleThreadLock<Option<Allocator>>);
+struct LockedHeap(SingleThreadLock<LateInit<Allocator>>);
 
 impl LockedHeap {
     fn finish_init(&self, alloc: Allocator) {
         self.0.with_lock(|underlying| {
-            *underlying = Some(alloc);
+            unsafe { underlying.finish_init(alloc) };
         });
     }
 
     fn with_allocator<R>(&self, body: impl FnOnce(&mut Allocator) -> R) -> R {
         self.0.with_lock(|alloc| {
-            let alloc = alloc.as_mut().expect("alloc not initialized");
-            body(alloc)
+            body(alloc.as_mut())
         })
     }
 }
@@ -46,7 +45,7 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
 }
 
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap(SingleThreadLock::new_unlocked(None));
+static ALLOCATOR: LockedHeap = LockedHeap(SingleThreadLock::new_unlocked(LateInit::new()));
 
 pub fn init(heap_start: usize, heap_size: usize) {
     let mut heap = Heap::empty();

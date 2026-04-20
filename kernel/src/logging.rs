@@ -3,7 +3,7 @@ use core::{
     fmt::{self, Write},
 };
 
-use crate::single_thread_lock::SingleThreadLock;
+use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
 
 use arch_x86_64::instructions::{self, port};
 use log;
@@ -13,7 +13,7 @@ use log;
 
 struct LogCollector {
     level: log::Level,
-    logger: SingleThreadLock<Option<PortLogger>>,
+    logger: SingleThreadLock<LateInit<PortLogger>>,
 }
 
 // it's not true, but is required for now
@@ -37,19 +37,19 @@ impl LogCollector {
     const fn new() -> Self {
         LogCollector {
             level: log::Level::Trace,
-            logger: SingleThreadLock::new_unlocked(None),
+            logger: SingleThreadLock::new_unlocked(LateInit::new()),
         }
     }
 
     fn finish_init(&self, port: u16) {
         self.logger
-            .with_lock(|logger| *logger = Some(PortLogger::new(port)));
+            .with_lock(|logger| unsafe { logger.finish_init(PortLogger::new(port)) });
     }
 
     // Must only be called after finish_init
     fn with_logger<R>(&self, body: impl FnOnce(&mut PortLogger) -> R) -> R {
         self.logger.with_lock(|logger| {
-            let logger = logger.as_mut().expect("log collector not initialized");
+            let logger = logger.as_mut();
             body(logger)
         })
     }
