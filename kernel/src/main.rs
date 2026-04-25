@@ -13,6 +13,7 @@ mod interrupts;
 mod late_init;
 mod logging;
 mod memory;
+mod process;
 mod single_thread_lock;
 mod tss;
 
@@ -38,7 +39,24 @@ fn init(boot_info: &'static BootInfo) -> BumpAllocator<'static> {
     let tss = tss::init(&mut mm);
     gdt::init(tss);
     interrupts::init();
+    process::init(&mut mm);
     mm
+}
+
+fn task_a() {
+    let mut i: u64 = 0;
+    loop {
+        info!("task_a: {i}");
+        i += 1;
+    }
+}
+
+fn task_b() {
+    let mut i: u64 = 0;
+    loop {
+        info!("task_b: {i}");
+        i += 1;
+    }
 }
 
 #[inline(never)]
@@ -47,6 +65,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     info!("inited with boot_info = {:?}", boot_info);
     info!("kernel run salt is: {:X}", boot_info.salt);
+
+    process::spawn(task_a, &mut mm);
+    process::spawn(task_b, &mut mm);
 
     common::hit(b'A');
     debug!("first log is HERE!");
@@ -67,22 +88,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     info!("len = {}, addr = {:p}", vec.len(), vec.as_ptr());
 
-    unsafe {
-        let mut rax = 10;
-        let rbx: u64 = 0;
-        let mut rdx: u64 = 0;
-        core::arch::asm!(
-            "div {divisor}",
-            divisor = in(reg) rbx,
-            inout("rax") rax,
-            inout("rdx") rdx,
-        );
-        info!("I will wait for you three: {rax} {rbx} {rdx}");
-    }
-
-    panic!("I want to panic");
-
-    unsafe { common::halt() }
+    process::run()
 }
 
 #[unsafe(no_mangle)]

@@ -1,6 +1,8 @@
 use arch_x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
 use log::trace;
 
+pub(super) use crate::process::timer::TIMER_INTERRUPT as timer_interrupt;
+
 macro_rules! make_handler {
     (panic, $name:ident) => {
         pub extern "x86-interrupt" fn $name(frame: InterruptStackFrame) {

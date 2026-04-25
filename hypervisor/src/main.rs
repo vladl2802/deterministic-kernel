@@ -14,7 +14,9 @@ use std::{
     ptr::null_mut,
 };
 
-use kvm_bindings::{KVM_MEM_LOG_DIRTY_PAGES, kvm_userspace_memory_region};
+use kvm_bindings::{
+    KVM_MEM_LOG_DIRTY_PAGES, KVM_PIT_SPEAKER_DUMMY, kvm_pit_config, kvm_userspace_memory_region,
+};
 use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
 
 use arch_x86_64::{
@@ -372,7 +374,8 @@ impl AddressSpaceState {
         let next_free_addr = frame_alloc.next_free_addr();
 
         let memory_region = Self::setup_vm_memory(vm_memory, &mut pt2);
-        let boot_info = Self::setup_boot_info(&mut pt1, boot_info_frame, memory_region, next_free_addr);
+        let boot_info =
+            Self::setup_boot_info(&mut pt1, boot_info_frame, memory_region, next_free_addr);
 
         Self {
             pt4: pt4_address,
@@ -540,6 +543,12 @@ fn setup_vm(kvm: &Kvm, kernel_binary: &str) -> (VmFd, VcpuFd, PhysicalMemory) {
     // > because of a quirk in the virtualization implementation
     vm.set_tss_address(0xfffbd000).unwrap();
     vm.set_identity_map_address(0xffffc000).unwrap();
+
+    let mut pit_config = kvm_pit_config::default();
+    pit_config.flags = KVM_PIT_SPEAKER_DUMMY;
+
+    vm.create_pit2(pit_config).unwrap();
+    vm.create_irq_chip().unwrap();
 
     let mut elf_data = Vec::new();
     File::open(kernel_binary)

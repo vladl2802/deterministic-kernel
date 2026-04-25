@@ -1,9 +1,10 @@
 use super::handler;
 use crate::late_init::LateInit;
 use crate::tss::DOUBLE_FAULT_IST_INDEX;
+use arch_x86_64::addr::VirtAddr;
 use arch_x86_64::structures::idt::InterruptDescriptorTable;
 
-static IDT: LateInit<InterruptDescriptorTable> = LateInit::new();
+pub static IDT: LateInit<InterruptDescriptorTable> = LateInit::new();
 
 macro_rules! set_handler {
     ($idt:ident, $name:ident) => {
@@ -37,6 +38,7 @@ pub fn init() {
     set_handler!(idt, vmm_communication_exception);
     set_handler!(idt, security_exception);
     unsafe {
+        idt[32].set_handler_addr(VirtAddr::new(handler::timer_interrupt as u64));
         IDT.finish_init(idt);
     }
     IDT.load();
