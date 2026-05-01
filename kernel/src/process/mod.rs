@@ -1,5 +1,6 @@
 mod context;
 mod scheduler;
+pub mod syscall;
 mod table;
 mod task;
 pub mod timer;

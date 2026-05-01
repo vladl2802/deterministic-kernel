@@ -44,10 +44,11 @@ fn init(boot_info: &'static BootInfo) -> MainMemoryManager {
 
 fn task_a() -> ! {
     let mut i: u64 = 0;
-    loop {
+    while i < 100 {
         info!("task_a: {i}");
         i += 1;
     }
+    process::syscall::exit()
 }
 
 fn task_b() -> ! {

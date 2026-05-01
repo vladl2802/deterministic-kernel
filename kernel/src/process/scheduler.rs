@@ -10,6 +10,30 @@ struct Scheduler {
     current: Option<TaskId>,
 }
 
+pub fn exit_current(current: *mut FullContext) -> *mut FullContext {
+    log::info!("exiting current");
+
+    let current_id = SCHEDULER.with_lock(|sched| sched.current);
+    let next_id = TABLE.with_lock(|table| table.next_after(current_id));
+
+    if let Some(current_id) = current_id {
+        TABLE.with_lock(|table| {
+            table.get_mut(current_id).unwrap().stop();
+            table.remove(current_id);
+        });
+    }
+
+    SCHEDULER.with_lock(|sched| sched.current = next_id);
+    if let Some(next_id) = next_id {
+        TABLE.with_lock(|table| {
+            let next_ctx = table.get_mut(next_id).unwrap().run();
+            unsafe { current.write(next_ctx) };
+        });
+    }
+
+    current
+}
+
 pub struct SchedulerHandler;
 
 impl InterruptHandler for SchedulerHandler {

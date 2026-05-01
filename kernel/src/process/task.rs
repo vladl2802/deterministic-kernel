@@ -75,7 +75,7 @@ impl Task {
 
     pub fn stop(&mut self) {
         assert!(
-            self.state == TaskState::Preempteed,
+            matches!(self.state, TaskState::Running | TaskState::Preempteed),
             "Attemp to stop task ({})",
             self.short_state()
         );

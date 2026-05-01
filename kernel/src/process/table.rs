@@ -1,5 +1,5 @@
 use arch_x86_64::pte::PageTableFlags;
-use log::info;
+use log;
 use crate::memory::MemoryManager;
 use super::task::{Task, TaskId};
 
@@ -26,7 +26,7 @@ impl TaskTable {
         let stack = mm
             .mmap(TASK_STACK_SIZE, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
             .expect("failed to allocate task stack");
-        info!("allocated stack: {:?} {:?}", stack.start, stack.size);
+        log::info!("allocated stack: {:?} {:?}", stack.start, stack.size);
         self.insert(Task::new(id, entry, stack));
         id
     }
@@ -44,6 +44,15 @@ impl TaskTable {
             }
         }
         None
+    }
+
+    pub fn remove(&mut self, id: TaskId) {
+        for slot in &mut self.tasks {
+            if slot.as_ref().map_or(false, |t| t.id() == id) {
+                *slot = None;
+                return;
+            }
+        }
     }
 
     fn insert(&mut self, task: Task) {

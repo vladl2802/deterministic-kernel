@@ -1,6 +1,7 @@
 use arch_x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
 use log::trace;
 
+pub(super) use crate::process::syscall::SYSCALL_INTERRUPT as syscall_interrupt;
 pub(super) use crate::process::timer::TIMER_INTERRUPT as timer_interrupt;
 
 macro_rules! make_handler {
