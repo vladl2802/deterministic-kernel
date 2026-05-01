@@ -22,8 +22,8 @@ pub enum MapError {
 }
 
 impl<'a> AddressSpace<'a> {
-    pub fn new(phys_mapping: &'a LinearPhysMapping, pt_alloc: &mut FrameAllocator) -> Option<Self> {
-        let pml4 = pt_alloc.allocate()?;
+    pub fn new(phys_mapping: &'a LinearPhysMapping, pt_alloc: &impl FrameAllocator) -> Option<Self> {
+        let pml4 = pt_alloc.alloc()?;
         PageTable::new_non_present(unsafe { &mut *phys_mapping.frame_to_ptr(pml4.phys()) });
         Some(Self { phys_mapping, pml4 })
     }
@@ -38,7 +38,7 @@ impl<'a> AddressSpace<'a> {
         virt: VirtAddr,
         frame: OwnedFrame,
         flags: PageTableFlags,
-        pt_alloc: &mut FrameAllocator,
+        pt_alloc: &impl FrameAllocator,
     ) -> Result<(), MapError> {
         let pte = unsafe {
             walk_or_create(self.phys_mapping, self.pml4.phys(), virt, flags, pt_alloc)
@@ -71,7 +71,7 @@ unsafe fn walk_or_create(
     pml4: L0Frame,
     virt: VirtAddr,
     flags: PageTableFlags,
-    pt_alloc: &mut FrameAllocator,
+    pt_alloc: &impl FrameAllocator,
 ) -> Option<*mut PageTableEntry> {
     let access = flags & PageTableFlags::ACCESS_FLAGS;
 
@@ -84,7 +84,7 @@ unsafe fn walk_or_create(
             None => return Some(&mut table[idx]),
             Some(next_level) => {
                 if !table[idx].flags().is_present() {
-                    let child = pt_alloc.allocate()?;
+                    let child = pt_alloc.alloc()?;
                     let child_phys = child.phys();
                     PageTable::new_non_present(unsafe { &mut *mapping.frame_to_ptr(child_phys) });
                     table[idx] =

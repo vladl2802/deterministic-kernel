@@ -21,40 +21,32 @@ pub trait MemoryManager {
     fn munmap(&mut self, handle: MappingHandle);
 }
 
-pub struct BumpAllocator<'a> {
+pub struct BumpAllocator<'a, A> {
     addr_space: AddressSpace<'a>,
-    frame_alloc: FrameAllocator<'a>,
+    frame_alloc: A,
     virt_next: VirtAddr,
 }
 
-impl<'a> BumpAllocator<'a> {
-    pub fn new(
-        phys_mapping: &'a LinearPhysMapping,
-        mut frame_alloc: FrameAllocator<'a>,
-        virt_base: VirtAddr,
-    ) -> Option<Self> {
-        let addr_space = AddressSpace::new(phys_mapping, &mut frame_alloc)?;
+impl<'a, A: FrameAllocator> BumpAllocator<'a, A> {
+    pub fn new(phys_mapping: &'a LinearPhysMapping, frame_alloc: A, virt_base: VirtAddr) -> Option<Self> {
+        let addr_space = AddressSpace::new(phys_mapping, &frame_alloc)?;
         Some(Self { addr_space, frame_alloc, virt_next: virt_base })
     }
 
-    pub unsafe fn with_current_pml4(
-        phys_mapping: &'a LinearPhysMapping,
-        frame_alloc: FrameAllocator<'a>,
-        virt_base: VirtAddr,
-    ) -> Self {
+    pub unsafe fn with_current_pml4(phys_mapping: &'a LinearPhysMapping, frame_alloc: A, virt_base: VirtAddr) -> Self {
         let addr_space = unsafe { AddressSpace::from_current(phys_mapping) };
         Self { addr_space, frame_alloc, virt_next: virt_base }
     }
 }
 
-impl MemoryManager for BumpAllocator<'_> {
+impl<A: FrameAllocator> MemoryManager for BumpAllocator<'_, A> {
     fn mmap(&mut self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
         let page_count = size.div_ceil(L0_PAGE_SIZE);
         let start = self.virt_next;
         for i in 0..page_count {
             let virt = VirtAddr::new(start.as_u64() + (i * L0_PAGE_SIZE) as u64);
-            let frame = self.frame_alloc.allocate()?;
-            self.addr_space.map(virt, frame, flags, &mut self.frame_alloc).ok()?;
+            let frame = self.frame_alloc.alloc()?;
+            self.addr_space.map(virt, frame, flags, &self.frame_alloc).ok()?;
         }
         self.virt_next = VirtAddr::new(start.as_u64() + (page_count * L0_PAGE_SIZE) as u64);
         Some(MappingHandle { start, size, flags })
@@ -65,7 +57,7 @@ impl MemoryManager for BumpAllocator<'_> {
         for i in 0..page_count {
             let virt = VirtAddr::new(handle.start.as_u64() + (i * L0_PAGE_SIZE) as u64);
             if let Some(frame) = self.addr_space.unmap(virt) {
-                self.frame_alloc.deallocate(frame);
+                self.frame_alloc.dealloc(frame);
             }
         }
     }

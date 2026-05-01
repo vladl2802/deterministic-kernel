@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-
 #![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
 
@@ -17,12 +16,12 @@ mod process;
 mod single_thread_lock;
 mod tss;
 
-use core;
 use alloc::vec::Vec;
+use core;
 
 use arch_x86_64::{protocol::BootInfo, pte::PageTableFlags};
 use log::{debug, error, info};
-use memory::{BumpAllocator, MemoryManager};
+use memory::{MainMemoryManager, MemoryManager};
 
 #[panic_handler]
 #[inline(never)]
@@ -32,7 +31,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     unsafe { common::halt() }
 }
 
-fn init(boot_info: &'static BootInfo) -> BumpAllocator<'static> {
+fn init(boot_info: &'static BootInfo) -> MainMemoryManager {
     logging::init(boot_info.logging_port);
     event::init(boot_info.event_port);
     let mut mm = memory::init(boot_info);

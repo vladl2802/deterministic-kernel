@@ -1,9 +1,32 @@
-use core::{mem::{self, ManuallyDrop}, ptr};
+use core::{
+    mem::{self, ManuallyDrop},
+    ptr,
+};
 
-use arch_x86_64::{addr::PhysAddr, frage::{L0Frame, L0Page}, protocol::LinearPhysMapping};
+use arch_x86_64::{
+    addr::PhysAddr,
+    frage::{L0Frame, L0Page},
+    protocol::LinearPhysMapping,
+};
+
+use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
 
 // TODO: deallocate on drop
 
+pub trait FrameAllocator {
+    fn alloc(&self) -> Option<OwnedFrame>;
+    fn dealloc(&self, frame: OwnedFrame);
+}
+
+impl<A: FrameAllocator> FrameAllocator for &A {
+    fn alloc(&self) -> Option<OwnedFrame> {
+        A::alloc(self)
+    }
+
+    fn dealloc(&self, frame: OwnedFrame) {
+        A::dealloc(self, frame)
+    }
+}
 pub struct OwnedFrame {
     frame: L0Frame,
 }
@@ -45,16 +68,17 @@ impl FrameInfo {
     }
 }
 
-pub struct FrameAllocator<'a> {
+pub struct FramePool<'a> {
     mapping: &'a LinearPhysMapping,
     free_count: u64,
     first_free: Option<u64>,
 }
 
-impl<'a> FrameAllocator<'a> {
+impl<'a> FramePool<'a> {
     pub fn new(mapping: &'a LinearPhysMapping, first_usable_phys: PhysAddr) -> Self {
         let free_count = mapping.frame_count();
-        let first_free = (first_usable_phys - mapping.frame_from_index(0).base_address()) / L0Page::SIZE;
+        let first_free =
+            (first_usable_phys - mapping.frame_from_index(0).base_address()) / L0Page::SIZE;
         let first_free = if first_free >= free_count {
             None
         } else {
@@ -73,7 +97,7 @@ impl<'a> FrameAllocator<'a> {
     }
 
     fn set_next_free(info: &mut FrameInfo, idx: u64, next_free: u64) {
-        info.set_info((next_free -  1) ^ idx);
+        info.set_info((next_free - 1) ^ idx);
     }
 
     pub fn allocate(&mut self) -> Option<OwnedFrame> {
@@ -108,4 +132,31 @@ impl<'a> FrameAllocator<'a> {
 
         self.first_free = Some(idx);
     }
+}
+
+impl FrameAllocator for SingleThreadLock<FramePool<'_>> {
+    fn alloc(&self) -> Option<OwnedFrame> {
+        self.with_lock(|pool| pool.allocate())
+    }
+
+    fn dealloc(&self, frame: OwnedFrame) {
+        self.with_lock(|pool| pool.deallocate(frame))
+    }
+}
+
+static FRAME_ALLOC: LateInit<MainFrameAllocator> = LateInit::new();
+
+pub type MainFrameAllocator = SingleThreadLock<FramePool<'static>>;
+
+pub fn init(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) {
+    unsafe {
+        FRAME_ALLOC.finish_init(SingleThreadLock::new_unlocked(FramePool::new(
+            mapping,
+            first_usable_phys,
+        )))
+    };
+}
+
+pub fn get() -> &'static SingleThreadLock<FramePool<'static>> {
+    &*FRAME_ALLOC
 }
