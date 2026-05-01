@@ -9,19 +9,15 @@ use buddy_system_allocator::Heap;
 
 type Allocator = Heap<32>;
 
-struct LockedHeap(SingleThreadLock<LateInit<Allocator>>);
+struct LockedHeap(LateInit<SingleThreadLock<Allocator>>);
 
 impl LockedHeap {
     fn finish_init(&self, alloc: Allocator) {
-        self.0.with_lock(|underlying| {
-            unsafe { underlying.finish_init(alloc) };
-        });
+        unsafe { self.0.finish_init(SingleThreadLock::new_unlocked(alloc)) };
     }
 
     fn with_allocator<R>(&self, body: impl FnOnce(&mut Allocator) -> R) -> R {
-        self.0.with_lock(|alloc| {
-            body(alloc.as_mut())
-        })
+        self.0.with_lock(body)
     }
 }
 
@@ -45,7 +41,7 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
 }
 
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap(SingleThreadLock::new_unlocked(LateInit::new()));
+static ALLOCATOR: LockedHeap = LockedHeap(LateInit::new());
 
 pub fn init(heap_start: usize, heap_size: usize) {
     let mut heap = Heap::empty();

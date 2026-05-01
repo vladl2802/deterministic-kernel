@@ -13,12 +13,8 @@ use log;
 
 struct LogCollector {
     level: log::Level,
-    logger: SingleThreadLock<LateInit<PortLogger>>,
+    logger: LateInit<SingleThreadLock<PortLogger>>,
 }
-
-// it's not true, but is required for now
-unsafe impl Send for LogCollector {}
-unsafe impl Sync for LogCollector {}
 
 // UnsafeCell is used here until SpinLock is implemented
 // as long as kernel does not have any concurrent actions
@@ -27,7 +23,6 @@ unsafe impl Sync for LogCollector {}
 // TODO: what if we panicked during `log`? Can we reuse this port without UB?
 struct PortLogger(UnsafeCell<PortWritter>);
 
-// it's not true, but is required for now
 unsafe impl Send for PortLogger {}
 unsafe impl Sync for PortLogger {}
 
@@ -37,21 +32,17 @@ impl LogCollector {
     const fn new() -> Self {
         LogCollector {
             level: log::Level::Trace,
-            logger: SingleThreadLock::new_unlocked(LateInit::new()),
+            logger: LateInit::new(),
         }
     }
 
     fn finish_init(&self, port: u16) {
-        self.logger
-            .with_lock(|logger| unsafe { logger.finish_init(PortLogger::new(port)) });
+        unsafe { self.logger.finish_init(SingleThreadLock::new_unlocked(PortLogger::new(port))) };
     }
 
     // Must only be called after finish_init
     fn with_logger<R>(&self, body: impl FnOnce(&mut PortLogger) -> R) -> R {
-        self.logger.with_lock(|logger| {
-            let logger = logger.as_mut();
-            body(logger)
-        })
+        self.logger.with_lock(body)
     }
 }
 
