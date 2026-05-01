@@ -42,7 +42,7 @@ fn init(boot_info: &'static BootInfo) -> MainMemoryManager {
     mm
 }
 
-fn task_a() {
+fn task_a() -> ! {
     let mut i: u64 = 0;
     loop {
         info!("task_a: {i}");
@@ -50,7 +50,7 @@ fn task_a() {
     }
 }
 
-fn task_b() {
+fn task_b() -> ! {
     let mut i: u64 = 0;
     loop {
         info!("task_b: {i}");

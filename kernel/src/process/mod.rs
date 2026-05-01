@@ -14,7 +14,7 @@ pub fn init(mm: &mut impl MemoryManager) {
     timer::init();
 }
 
-pub fn spawn(entry: fn(), mm: &mut impl MemoryManager) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
     scheduler::spawn(entry, mm)
 }
 

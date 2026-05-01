@@ -17,10 +17,10 @@ impl TaskTable {
     }
 
     pub fn first(&self) -> Option<TaskId> {
-        self.tasks.iter().find_map(|t| t.as_ref().map(|t| t.id))
+        self.tasks.iter().find_map(|t| t.as_ref().map(|t| t.id()))
     }
 
-    pub fn spawn(&mut self, entry: fn(), mm: &mut impl MemoryManager) -> TaskId {
+    pub fn spawn(&mut self, entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id += 1;
         let stack = mm
@@ -32,15 +32,15 @@ impl TaskTable {
     }
 
     pub fn get_mut(&mut self, id: TaskId) -> Option<&mut Task> {
-        self.tasks.iter_mut().find_map(|t| t.as_mut().filter(|t| t.id == id))
+        self.tasks.iter_mut().find_map(|t| t.as_mut().filter(|t| t.id() == id))
     }
 
     pub fn next_after(&self, current: Option<TaskId>) -> Option<TaskId> {
         let Some(id) = current else { return self.first(); };
-        let start = self.tasks.iter().position(|t| t.as_ref().map_or(false, |t| t.id == id))?;
+        let start = self.tasks.iter().position(|t| t.as_ref().map_or(false, |t| t.id() == id))?;
         for i in 1..=MAX_TASKS {
             if let Some(task) = &self.tasks[(start + i) % MAX_TASKS] {
-                return Some(task.id);
+                return Some(task.id());
             }
         }
         None

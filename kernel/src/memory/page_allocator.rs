@@ -10,6 +10,7 @@ use super::{
     frame_allocator::FrameAllocator,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct MappingHandle {
     pub start: VirtAddr,
     pub size: usize,

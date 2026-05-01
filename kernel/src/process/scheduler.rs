@@ -19,7 +19,7 @@ pub fn init() {
     }
 }
 
-pub fn spawn(entry: fn(), mm: &mut impl MemoryManager) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
     TABLE.with_lock(|table| table.spawn(entry, mm))
 }
 
@@ -41,9 +41,9 @@ impl InterruptHandler for SchedulerHandler {
 
         TABLE.with_lock(|table| {
             if let Some(cur_id) = current_id {
-                table.get_mut(cur_id).unwrap().context = unsafe { current.read() };
+                table.get_mut(cur_id).unwrap().preempt(unsafe { current.read() });
             }
-            let next_ctx = table.get_mut(next_id).unwrap().context;
+            let next_ctx = table.get_mut(next_id).unwrap().run();
             unsafe { current.write(next_ctx) };
         });
 
