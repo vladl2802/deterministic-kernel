@@ -9,11 +9,9 @@ mod common;
 mod event;
 mod gdt;
 mod interrupts;
-mod late_init;
 mod logging;
 mod memory;
 mod process;
-mod single_thread_lock;
 mod tss;
 
 use alloc::vec::Vec;

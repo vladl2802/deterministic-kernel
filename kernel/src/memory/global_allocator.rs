@@ -3,7 +3,7 @@ use core::{
     ptr,
 };
 
-use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
+use crate::common::{LateInit, SingleThreadLock};
 
 use buddy_system_allocator::Heap;
 

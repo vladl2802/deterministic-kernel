@@ -1,10 +1,13 @@
-use crate::late_init::LateInit;
-use crate::memory::MemoryManager;
-use crate::single_thread_lock::SingleThreadLock;
+use crate::{
+    common::{LateInit, SingleThreadLock},
+    memory::MemoryManager,
+};
 
-use super::context::{FullContext, InterruptHandler};
-use super::table::TaskTable;
-use super::task::TaskId;
+use super::{
+    context::{FullContext, InterruptHandler},
+    table::TaskTable,
+    task::TaskId,
+};
 
 struct Scheduler {
     current: Option<TaskId>,

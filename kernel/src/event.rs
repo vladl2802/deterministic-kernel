@@ -2,7 +2,7 @@ use arch_x86_64::instructions::port;
 
 pub use arch_x86_64::protocol::KernelEvent;
 
-use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
+use crate::common::{LateInit, SingleThreadLock};
 
 struct EventPort(LateInit<SingleThreadLock<port::Port<u8>>>);
 

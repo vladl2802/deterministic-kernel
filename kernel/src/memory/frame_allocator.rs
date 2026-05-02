@@ -9,7 +9,7 @@ use arch_x86_64::{
     protocol::LinearPhysMapping,
 };
 
-use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
+use crate::common::{LateInit, SingleThreadLock};
 
 // TODO: deallocate on drop
 

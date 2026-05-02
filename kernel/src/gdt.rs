@@ -4,7 +4,7 @@ use arch_x86_64::{
     structures::gdt::{Descriptor, GlobalDescriptorTable},
     structures::tss::TaskStateSegment,
 };
-use crate::late_init::LateInit;
+use crate::common::LateInit;
 
 static GDT: LateInit<GlobalDescriptorTable> = LateInit::new();
 

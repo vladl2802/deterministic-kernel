@@ -3,7 +3,7 @@ use core::{
     fmt::{self, Write},
 };
 
-use crate::{late_init::LateInit, single_thread_lock::SingleThreadLock};
+use crate::common::{LateInit, SingleThreadLock};
 
 use arch_x86_64::instructions::{self, port};
 use log;

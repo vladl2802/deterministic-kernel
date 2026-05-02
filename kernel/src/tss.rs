@@ -1,5 +1,5 @@
 use arch_x86_64::{addr::VirtAddr, pte::PageTableFlags, structures::tss::TaskStateSegment};
-use crate::late_init::LateInit;
+use crate::common::LateInit;
 use crate::memory::MemoryManager;
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;

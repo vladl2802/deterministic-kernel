@@ -1,8 +1,8 @@
+use arch_x86_64::{addr::VirtAddr, structures::idt::InterruptDescriptorTable};
+
+use crate::{common::LateInit, tss::DOUBLE_FAULT_IST_INDEX};
+
 use super::handler;
-use crate::late_init::LateInit;
-use crate::tss::DOUBLE_FAULT_IST_INDEX;
-use arch_x86_64::addr::VirtAddr;
-use arch_x86_64::structures::idt::InterruptDescriptorTable;
 
 pub static IDT: LateInit<InterruptDescriptorTable> = LateInit::new();
 
