@@ -8,7 +8,7 @@ const RING0_STACK_SIZE: usize = 4096 * 5;
 
 static TSS: LateInit<TaskStateSegment> = LateInit::new();
 
-pub fn init(mm: &mut impl MemoryManager) -> &'static TaskStateSegment {
+pub fn init(mm: &impl MemoryManager) -> &'static TaskStateSegment {
     let df_stack = mm
         .mmap(DOUBLE_FAULT_STACK_SIZE, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
         .expect("failed to allocate double fault stack");

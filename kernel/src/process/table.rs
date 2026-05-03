@@ -20,7 +20,7 @@ impl TaskTable {
         self.tasks.iter().find_map(|t| t.as_ref().map(|t| t.id()))
     }
 
-    pub fn spawn(&mut self, entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
+    pub fn spawn(&mut self, entry: fn() -> !, mm: &impl MemoryManager) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id += 1;
         let stack = mm

@@ -10,12 +10,12 @@ use crate::{common, memory::MemoryManager};
 
 pub use task::TaskId;
 
-pub fn init(mm: &mut impl MemoryManager) {
+pub fn init() {
     scheduler::init();
     timer::init();
 }
 
-pub fn spawn(entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &impl MemoryManager) -> TaskId {
     scheduler::spawn(entry, mm)
 }
 

@@ -1,8 +1,16 @@
+use core::alloc::{Allocator, Layout};
+use core::ptr;
+
 use arch_x86_64::{
     addr::VirtAddr, frage::L0_PAGE_SIZE, protocol::LinearPhysMapping, pte::PageTableFlags,
 };
 
-use super::{address_space::AddressSpace, frame_allocator::FrameAllocator};
+use crate::common::{SingleThreadLock, StaticStructWrapper, declare_static_struct};
+
+use super::{
+    address_space::AddressSpace,
+    frame_allocator::{FrameAllocator, MainFrameAllocator},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MappingHandle {
@@ -12,11 +20,11 @@ pub struct MappingHandle {
 }
 
 pub trait MemoryManager {
-    fn mmap(&mut self, size: usize, flags: PageTableFlags) -> Option<MappingHandle>;
-    fn munmap(&mut self, handle: MappingHandle);
+    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle>;
+    fn munmap(&self, handle: MappingHandle);
     // TODO: maybe split into move, shrink and grow
     fn mremap(
-        &mut self,
+        &self,
         handle: MappingHandle,
         new_size: usize,
         new_flags: PageTableFlags,
@@ -55,9 +63,7 @@ impl<'a, A: FrameAllocator> BumpAllocator<'a, A> {
             frame_alloc,
         }
     }
-}
 
-impl<A: FrameAllocator> MemoryManager for BumpAllocator<'_, A> {
     fn mmap(&mut self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
         let page_count = size.div_ceil(L0_PAGE_SIZE);
         let start = self.virt_next;
@@ -133,4 +139,81 @@ impl<A: FrameAllocator> MemoryManager for BumpAllocator<'_, A> {
             flags: new_flags,
         })
     }
+}
+
+impl<A: FrameAllocator> MemoryManager for SingleThreadLock<BumpAllocator<'_, A>> {
+    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
+        self.with_lock(|mm| mm.mmap(size, flags))
+    }
+
+    fn munmap(&self, handle: MappingHandle) {
+        self.with_lock(|mm| mm.munmap(handle))
+    }
+
+    fn mremap(
+        &self,
+        handle: MappingHandle,
+        new_size: usize,
+        new_flags: PageTableFlags,
+    ) -> Option<MappingHandle> {
+        self.with_lock(|mm| mm.mremap(handle, new_size, new_flags))
+    }
+}
+
+unsafe impl<A: FrameAllocator> Allocator for SingleThreadLock<BumpAllocator<'_, A>> {
+    fn allocate(&self, layout: Layout) -> Result<ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        self.with_lock(|mm| {
+            let align = layout.align();
+            let aligned = mm.virt_next.align_up(align as u64);
+            mm.virt_next = aligned;
+            let handle = mm
+                .mmap(
+                    layout.size(),
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                )
+                .ok_or(core::alloc::AllocError)?;
+            let ptr = handle.start.as_u64() as *mut u8;
+            let slice = core::ptr::slice_from_raw_parts_mut(ptr, layout.size());
+            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
+        })
+    }
+
+    unsafe fn deallocate(&self, ptr: ptr::NonNull<u8>, layout: Layout) {
+        let handle = MappingHandle {
+            start: VirtAddr::new(ptr.as_ptr() as u64),
+            size: layout.size(),
+            flags: PageTableFlags::empty(),
+        };
+        self.with_lock(|mm| mm.munmap(handle));
+    }
+}
+
+impl<T: StaticStructWrapper<UnderlyingT: MemoryManager>> MemoryManager for T {
+    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
+        Self::get().mmap(size, flags)
+    }
+
+    fn munmap(&self, handle: MappingHandle) {
+        Self::get().munmap(handle);
+    }
+
+    fn mremap(
+        &self,
+        handle: MappingHandle,
+        new_size: usize,
+        new_flags: PageTableFlags,
+    ) -> Option<MappingHandle> {
+        Self::get().mremap(handle, new_size, new_flags)
+    }
+}
+
+declare_static_struct!(pub main_memory_manager => MainMemoryManager = SingleThreadLock<BumpAllocator<'static, MainFrameAllocator>>);
+pub use main_memory_manager::MainMemoryManager;
+
+const HEAP_VIRT_BASE: VirtAddr = VirtAddr::new_truncate(0x0000_4000_0000_0000);
+
+pub fn init(mapping: &'static LinearPhysMapping) {
+    MainMemoryManager::finish_init(SingleThreadLock::new_unlocked(unsafe {
+        BumpAllocator::with_current_pml4(mapping, HEAP_VIRT_BASE, MainFrameAllocator)
+    }));
 }

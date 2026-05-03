@@ -75,6 +75,6 @@ pub fn init() {
     }
 }
 
-pub fn spawn(entry: fn() -> !, mm: &mut impl MemoryManager) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &impl MemoryManager) -> TaskId {
     TABLE.with_lock(|table| table.spawn(entry, mm))
 }

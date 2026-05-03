@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
+#![feature(allocator_api)]
 
 extern crate alloc;
 
@@ -29,15 +30,14 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     unsafe { common::halt() }
 }
 
-fn init(boot_info: &'static BootInfo) -> MainMemoryManager {
+fn init(boot_info: &'static BootInfo) {
     logging::init(boot_info.logging_port);
     event::init(boot_info.event_port);
-    let mut mm = memory::init(boot_info);
-    let tss = tss::init(&mut mm);
+    memory::init(boot_info);
+    let tss = tss::init(&MainMemoryManager);
     gdt::init(tss);
     interrupts::init();
-    process::init(&mut mm);
-    mm
+    process::init();
 }
 
 fn task_a() -> ! {
@@ -59,26 +59,26 @@ fn task_b() -> ! {
 
 #[inline(never)]
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    let mut mm = init(boot_info);
+    init(boot_info);
 
     info!("inited with boot_info = {:?}", boot_info);
     info!("kernel run salt is: {:X}", boot_info.salt);
 
-    process::spawn(task_a, &mut mm);
-    process::spawn(task_b, &mut mm);
+    process::spawn(task_a, &MainMemoryManager);
+    process::spawn(task_b, &MainMemoryManager);
 
     common::hit(b'A');
     debug!("first log is HERE!");
     common::hit(b'B');
 
-    let handle = mm
+    let handle = MainMemoryManager
         .mmap(4096, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
         .unwrap();
     unsafe { handle.start.as_mut_ptr::<u8>().write(0xAB) };
     let val = unsafe { handle.start.as_ptr::<u8>().read() };
     assert_eq!(val, 0xAB);
     info!("memory manager ok: {:#x}", val);
-    mm.munmap(handle);
+    MainMemoryManager.munmap(handle);
 
     let mut vec = Vec::with_capacity(10);
     for _ in 0..20 {
