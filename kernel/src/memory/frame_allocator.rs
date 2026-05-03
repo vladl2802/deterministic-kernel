@@ -9,7 +9,7 @@ use arch_x86_64::{
     protocol::LinearPhysMapping,
 };
 
-use crate::common::{LateInit, SingleThreadLock};
+use crate::common::{SingleThreadLock, StaticStructWrapper, declare_static_struct};
 
 // TODO: deallocate on drop
 
@@ -18,15 +18,6 @@ pub trait FrameAllocator {
     fn dealloc(&self, frame: OwnedFrame);
 }
 
-impl<A: FrameAllocator> FrameAllocator for &A {
-    fn alloc(&self) -> Option<OwnedFrame> {
-        A::alloc(self)
-    }
-
-    fn dealloc(&self, frame: OwnedFrame) {
-        A::dealloc(self, frame)
-    }
-}
 pub struct OwnedFrame {
     frame: L0Frame,
 }
@@ -144,19 +135,22 @@ impl FrameAllocator for SingleThreadLock<FramePool<'_>> {
     }
 }
 
-static FRAME_ALLOC: LateInit<MainFrameAllocator> = LateInit::new();
+impl<T: StaticStructWrapper<UnderlyingT: FrameAllocator>> FrameAllocator for T {
+    fn alloc(&self) -> Option<OwnedFrame> {
+        Self::get().alloc()
+    }
 
-pub type MainFrameAllocator = SingleThreadLock<FramePool<'static>>;
-
-pub fn init(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) {
-    unsafe {
-        FRAME_ALLOC.finish_init(SingleThreadLock::new_unlocked(FramePool::new(
-            mapping,
-            first_usable_phys,
-        )))
-    };
+    fn dealloc(&self, frame: OwnedFrame) {
+        Self::get().dealloc(frame);
+    }
 }
 
-pub fn get() -> &'static SingleThreadLock<FramePool<'static>> {
-    &*FRAME_ALLOC
+declare_static_struct!(pub main_frame_alloc => MainFrameAllocator = SingleThreadLock<FramePool<'static>>);
+pub use main_frame_alloc::MainFrameAllocator;
+
+pub fn init(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) {
+    MainFrameAllocator::finish_init(SingleThreadLock::new_unlocked(FramePool::new(
+        mapping,
+        first_usable_phys,
+    )))
 }

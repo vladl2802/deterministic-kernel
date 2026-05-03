@@ -12,13 +12,13 @@ use arch_x86_64::{addr::VirtAddr, protocol::BootInfo, pte::PageTableFlags};
 const HEAP_VIRT_BASE: VirtAddr = VirtAddr::new_truncate(0x0000_4000_0000_0000);
 const HEAP_SIZE: usize = 1024 * 1024; // 1 MiB
 
-pub type MainMemoryManager = BumpAllocator<'static, &'static MainFrameAllocator>;
+pub type MainMemoryManager = BumpAllocator<'static, MainFrameAllocator>;
 
 pub fn init(boot_info: &'static BootInfo) -> MainMemoryManager {
     let region = &boot_info.memory_region;
     frame_allocator::init(region, boot_info.first_usable_phys);
     let mut mm =
-        unsafe { BumpAllocator::with_current_pml4(region, frame_allocator::get(), HEAP_VIRT_BASE) };
+        unsafe { BumpAllocator::with_current_pml4(region, HEAP_VIRT_BASE, MainFrameAllocator) };
 
     let heap = mm
         .mmap(
