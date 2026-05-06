@@ -20,7 +20,7 @@ use core;
 
 use arch_x86_64::{protocol::BootInfo, pte::PageTableFlags};
 use log::{debug, error, info};
-use memory::{MainMemoryManager, MemoryManager};
+use memory::{MainMemoryManager, PageAllocator};
 
 #[panic_handler]
 #[inline(never)]
@@ -72,13 +72,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     common::hit(b'B');
 
     let handle = MainMemoryManager
-        .mmap(4096, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
+        .map(4096, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
         .unwrap();
     unsafe { handle.start.as_mut_ptr::<u8>().write(0xAB) };
     let val = unsafe { handle.start.as_ptr::<u8>().read() };
     assert_eq!(val, 0xAB);
     info!("memory manager ok: {:#x}", val);
-    MainMemoryManager.munmap(handle);
+    MainMemoryManager.unmap(handle);
 
     let mut vec = Vec::with_capacity(10);
     for _ in 0..20 {

@@ -5,7 +5,7 @@ pub mod page_allocator;
 
 pub use address_space::{AddressSpace, MapError};
 pub use frame_allocator::{FrameAllocator, MainFrameAllocator, OwnedFrame};
-pub use page_allocator::{BumpAllocator, MappingHandle, MemoryManager, MainMemoryManager};
+pub use page_allocator::{BumpAllocator, MappingHandle, PageAllocator, MainMemoryManager};
 
 use crate::common::SingleThreadLock;
 use arch_x86_64::{addr::VirtAddr, protocol::BootInfo, pte::PageTableFlags};
@@ -18,7 +18,7 @@ pub fn init(boot_info: &'static BootInfo) {
     page_allocator::init(region);
 
     let heap = MainMemoryManager
-        .mmap(
+        .map(
             HEAP_SIZE,
             PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
         )

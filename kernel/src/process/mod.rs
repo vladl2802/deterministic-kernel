@@ -6,7 +6,7 @@ mod task;
 pub mod timer;
 
 use arch_x86_64::instructions::interrupts;
-use crate::{common, memory::MemoryManager};
+use crate::{common, memory::PageAllocator};
 
 pub use task::TaskId;
 
@@ -15,7 +15,7 @@ pub fn init() {
     timer::init();
 }
 
-pub fn spawn(entry: fn() -> !, mm: &impl MemoryManager) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &impl PageAllocator) -> TaskId {
     scheduler::spawn(entry, mm)
 }
 

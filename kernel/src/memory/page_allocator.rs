@@ -19,11 +19,11 @@ pub struct MappingHandle {
     pub flags: PageTableFlags,
 }
 
-pub trait MemoryManager {
-    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle>;
-    fn munmap(&self, handle: MappingHandle);
+pub trait PageAllocator {
+    fn map(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle>;
+    fn unmap(&self, handle: MappingHandle);
     // TODO: maybe split into move, shrink and grow
-    fn mremap(
+    fn remap(
         &self,
         handle: MappingHandle,
         new_size: usize,
@@ -141,16 +141,16 @@ impl<'a, A: FrameAllocator> BumpAllocator<'a, A> {
     }
 }
 
-impl<A: FrameAllocator> MemoryManager for SingleThreadLock<BumpAllocator<'_, A>> {
-    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
+impl<A: FrameAllocator> PageAllocator for SingleThreadLock<BumpAllocator<'_, A>> {
+    fn map(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
         self.with_lock(|mm| mm.mmap(size, flags))
     }
 
-    fn munmap(&self, handle: MappingHandle) {
+    fn unmap(&self, handle: MappingHandle) {
         self.with_lock(|mm| mm.munmap(handle))
     }
 
-    fn mremap(
+    fn remap(
         &self,
         handle: MappingHandle,
         new_size: usize,
@@ -188,22 +188,22 @@ unsafe impl<A: FrameAllocator> Allocator for SingleThreadLock<BumpAllocator<'_, 
     }
 }
 
-impl<T: StaticStructWrapper<UnderlyingT: MemoryManager>> MemoryManager for T {
-    fn mmap(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
-        Self::get().mmap(size, flags)
+impl<T: StaticStructWrapper<UnderlyingT: PageAllocator>> PageAllocator for T {
+    fn map(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
+        Self::get().map(size, flags)
     }
 
-    fn munmap(&self, handle: MappingHandle) {
-        Self::get().munmap(handle);
+    fn unmap(&self, handle: MappingHandle) {
+        Self::get().unmap(handle);
     }
 
-    fn mremap(
+    fn remap(
         &self,
         handle: MappingHandle,
         new_size: usize,
         new_flags: PageTableFlags,
     ) -> Option<MappingHandle> {
-        Self::get().mremap(handle, new_size, new_flags)
+        Self::get().remap(handle, new_size, new_flags)
     }
 }
 

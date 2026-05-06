@@ -1,6 +1,6 @@
 use arch_x86_64::pte::PageTableFlags;
 use log;
-use crate::memory::MemoryManager;
+use crate::memory::PageAllocator;
 use super::task::{Task, TaskId};
 
 const MAX_TASKS: usize = 16;
@@ -20,11 +20,11 @@ impl TaskTable {
         self.tasks.iter().find_map(|t| t.as_ref().map(|t| t.id()))
     }
 
-    pub fn spawn(&mut self, entry: fn() -> !, mm: &impl MemoryManager) -> TaskId {
+    pub fn spawn(&mut self, entry: fn() -> !, mm: &impl PageAllocator) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id += 1;
         let stack = mm
-            .mmap(TASK_STACK_SIZE, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
+            .map(TASK_STACK_SIZE, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
             .expect("failed to allocate task stack");
         log::info!("allocated stack: {:?} {:?}", stack.start, stack.size);
         self.insert(Task::new(id, entry, stack));
