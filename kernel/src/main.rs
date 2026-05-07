@@ -8,6 +8,7 @@ extern crate alloc;
 
 mod common;
 mod event;
+mod fs;
 mod gdt;
 mod interrupts;
 mod logging;
@@ -87,6 +88,20 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vec.push(1);
     }
     info!("len = {}, addr = {:p}", vec.len(), vec.as_ptr());
+
+    {
+        use fs::memory_file::MemoryBackedFile;
+        use fs::descriptor::{DescriptorRead, DescriptorSeek, DescriptorWrite, SeekFrom};
+        let mut file = MemoryBackedFile::new_empty(MemoryManager::main_segment());
+        let pattern: &[u8] = b"deterministic kernel fs test";
+        file.write(pattern).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut buf = [0u8; 28];
+        let n = file.read(&mut buf).unwrap();
+        assert_eq!(n, pattern.len());
+        assert_eq!(&buf[..n], pattern);
+        info!("fs is ok");
+    }
 
     process::run()
 }
