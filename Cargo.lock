@@ -87,6 +87,7 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "arch_x86_64",
+ "bitflags 2.10.0",
  "buddy_system_allocator",
  "log",
 ]

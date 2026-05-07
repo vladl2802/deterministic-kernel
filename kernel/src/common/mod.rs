@@ -1,9 +1,12 @@
 use arch_x86_64::{instructions, protocol::HIT_PORT};
 
+mod intrusive_rc;
 mod late_init;
+pub mod marker;
 mod single_thread_lock;
 mod static_struct;
 
+pub use intrusive_rc::{IntrusiveRcStorage, RcStored};
 pub use late_init::LateInit;
 pub use single_thread_lock::SingleThreadLock;
 pub(crate) use static_struct::{StaticStructWrapper, declare_static_struct};

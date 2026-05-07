@@ -7,7 +7,7 @@ use crate::{
     pte::{PAGE_OFFSET_BITS, PAGE_TABLE_INDEX_BITS},
 };
 
-use core::{marker::PhantomData, mem::MaybeUninit, ops::Range, ptr};
+use core::{fmt, marker::PhantomData, mem::MaybeUninit, ops::Range, ptr};
 
 use common::{align_marker::AlignMarker, define_align};
 
@@ -173,6 +173,20 @@ impl<Sz: Size, const M: usize> AlignedChunkable<Phys, Sz, M> for PhysBlock<Sz, A
         unsafe { PhysChunks::new_unchecked(self.base, N as u64, self.size as usize / N) }
     }
 }
+
+impl<Sz: Size, Al: Align + fmt::Debug> fmt::Display for PhysBlock<Sz, Al> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PhysBlock")
+            .field(
+                "block",
+                &format_args!("[{:#x}; {:#x}]", self.base, self.base + self.size),
+            )
+            .field("size", &self.size)
+            .field("align", &Al::instance())
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PhysChunks<Sz: Size, Al: Align> {
     base: PhysAddr,
@@ -365,6 +379,19 @@ impl<'a, Sz: Size, const M: usize> AlignedChunkable<Virt, Sz, M>
         assert_eq!(self.size % N as u64, 0);
         assert_eq!(N % M, 0);
         unsafe { VirtChunks::new_unchecked(self.base, N as u64, self.size as usize / N) }
+    }
+}
+
+impl<'a, Sz: Size, Al: Align + fmt::Debug> fmt::Display for VirtBlock<'a, Sz, Al> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VirtBlock")
+            .field(
+                "block",
+                &format_args!("[{:#x}; {:#x}]", self.base, self.base + self.size),
+            )
+            .field("size", &self.size)
+            .field("align", &Al::instance())
+            .finish()
     }
 }
 

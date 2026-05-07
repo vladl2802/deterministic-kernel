@@ -1,6 +1,6 @@
 use arch_x86_64::{addr::VirtAddr, structures::idt::InterruptDescriptorTable};
 
-use crate::{common::LateInit, tss::DOUBLE_FAULT_IST_INDEX};
+use crate::{common::LateInit, tss};
 
 use super::handler;
 
@@ -22,7 +22,7 @@ pub fn init() {
     set_handler!(idt, bound_range_exceeded);
     set_handler!(idt, invalid_opcode);
     set_handler!(idt, device_not_available);
-    unsafe { set_handler!(idt, double_fault).set_stack_index(DOUBLE_FAULT_IST_INDEX) };
+    unsafe { set_handler!(idt, double_fault).set_stack_index(tss::DOUBLE_FAULT_IST_INDEX) };
     set_handler!(idt, invalid_tss);
     set_handler!(idt, segment_not_present);
     set_handler!(idt, stack_segment_fault);
@@ -39,7 +39,9 @@ pub fn init() {
     set_handler!(idt, security_exception);
     unsafe {
         idt[32].set_handler_addr(VirtAddr::new(handler::timer_interrupt as u64));
-        idt[0x80].set_handler_addr(VirtAddr::new(handler::syscall_interrupt as u64));
+        idt[0x80]
+            .set_handler_addr(VirtAddr::new(handler::syscall_interrupt as u64))
+            .set_stack_index(tss::SYSCALL_IST_INDEX);
         IDT.finish_init(idt);
     }
     IDT.load();

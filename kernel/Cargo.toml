@@ -11,5 +11,6 @@ bench = false
 
 [dependencies]
 arch_x86_64 = { version = "0.1.0", path = "../arch_x86_64" }
+bitflags = "2.10.0"
 buddy_system_allocator = { version = "0.13.0", default-features = false, features = ["alloc"] }
 log = "0.4.29"

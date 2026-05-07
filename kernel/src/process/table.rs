@@ -1,6 +1,7 @@
-use arch_x86_64::pte::PageTableFlags;
 use log;
-use crate::memory::PageAllocator;
+
+use crate::memory::{MappingFlags, MemorySegment, chunk::OwnedChunk};
+
 use super::task::{Task, TaskId};
 
 const MAX_TASKS: usize = 16;
@@ -13,31 +14,41 @@ pub struct TaskTable {
 
 impl TaskTable {
     pub const fn new() -> Self {
-        Self { tasks: [const { None }; MAX_TASKS], next_id: 0 }
+        Self {
+            tasks: [const { None }; MAX_TASKS],
+            next_id: 0,
+        }
     }
 
     pub fn first(&self) -> Option<TaskId> {
         self.tasks.iter().find_map(|t| t.as_ref().map(|t| t.id()))
     }
 
-    pub fn spawn(&mut self, entry: fn() -> !, mm: &impl PageAllocator) -> TaskId {
+    pub fn spawn(&mut self, entry: fn() -> !, mm: &impl MemorySegment) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id += 1;
         let stack = mm
-            .map(TASK_STACK_SIZE, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
+            .map(TASK_STACK_SIZE, MappingFlags::WRITE)
             .expect("failed to allocate task stack");
-        log::info!("allocated stack: {:?} {:?}", stack.start, stack.size);
-        self.insert(Task::new(id, entry, stack));
+        log::info!("allocated stack: {}", stack);
+        self.insert(Task::new(id, entry, OwnedChunk::new(stack)));
         id
     }
 
     pub fn get_mut(&mut self, id: TaskId) -> Option<&mut Task> {
-        self.tasks.iter_mut().find_map(|t| t.as_mut().filter(|t| t.id() == id))
+        self.tasks
+            .iter_mut()
+            .find_map(|t| t.as_mut().filter(|t| t.id() == id))
     }
 
     pub fn next_after(&self, current: Option<TaskId>) -> Option<TaskId> {
-        let Some(id) = current else { return self.first(); };
-        let start = self.tasks.iter().position(|t| t.as_ref().map_or(false, |t| t.id() == id))?;
+        let Some(id) = current else {
+            return self.first();
+        };
+        let start = self
+            .tasks
+            .iter()
+            .position(|t| t.as_ref().map_or(false, |t| t.id() == id))?;
         for i in 1..=MAX_TASKS {
             if let Some(task) = &self.tasks[(start + i) % MAX_TASKS] {
                 return Some(task.id());

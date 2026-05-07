@@ -1,15 +1,12 @@
-use core::alloc::{Allocator, Layout};
-use core::ptr;
-
 use arch_x86_64::{
     addr::VirtAddr, frage::L0_PAGE_SIZE, protocol::LinearPhysMapping, pte::PageTableFlags,
 };
 
-use crate::common::{SingleThreadLock, StaticStructWrapper, declare_static_struct};
+use crate::common::SingleThreadLock;
 
 use super::{
     address_space::AddressSpace,
-    frame_allocator::{FrameAllocator, MainFrameAllocator},
+    frame_allocator::FrameAllocator,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -158,62 +155,4 @@ impl<A: FrameAllocator> PageAllocator for SingleThreadLock<BumpAllocator<'_, A>>
     ) -> Option<MappingHandle> {
         self.with_lock(|mm| mm.mremap(handle, new_size, new_flags))
     }
-}
-
-unsafe impl<A: FrameAllocator> Allocator for SingleThreadLock<BumpAllocator<'_, A>> {
-    fn allocate(&self, layout: Layout) -> Result<ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        self.with_lock(|mm| {
-            let align = layout.align();
-            let aligned = mm.virt_next.align_up(align as u64);
-            mm.virt_next = aligned;
-            let handle = mm
-                .mmap(
-                    layout.size(),
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                )
-                .ok_or(core::alloc::AllocError)?;
-            let ptr = handle.start.as_u64() as *mut u8;
-            let slice = core::ptr::slice_from_raw_parts_mut(ptr, layout.size());
-            Ok(unsafe { ptr::NonNull::new_unchecked(slice) })
-        })
-    }
-
-    unsafe fn deallocate(&self, ptr: ptr::NonNull<u8>, layout: Layout) {
-        let handle = MappingHandle {
-            start: VirtAddr::new(ptr.as_ptr() as u64),
-            size: layout.size(),
-            flags: PageTableFlags::empty(),
-        };
-        self.with_lock(|mm| mm.munmap(handle));
-    }
-}
-
-impl<T: StaticStructWrapper<UnderlyingT: PageAllocator>> PageAllocator for T {
-    fn map(&self, size: usize, flags: PageTableFlags) -> Option<MappingHandle> {
-        Self::get().map(size, flags)
-    }
-
-    fn unmap(&self, handle: MappingHandle) {
-        Self::get().unmap(handle);
-    }
-
-    fn remap(
-        &self,
-        handle: MappingHandle,
-        new_size: usize,
-        new_flags: PageTableFlags,
-    ) -> Option<MappingHandle> {
-        Self::get().remap(handle, new_size, new_flags)
-    }
-}
-
-declare_static_struct!(pub main_memory_manager => MainMemoryManager = SingleThreadLock<BumpAllocator<'static, MainFrameAllocator>>);
-pub use main_memory_manager::MainMemoryManager;
-
-const HEAP_VIRT_BASE: VirtAddr = VirtAddr::new_truncate(0x0000_4000_0000_0000);
-
-pub fn init(mapping: &'static LinearPhysMapping) {
-    MainMemoryManager::finish_init(SingleThreadLock::new_unlocked(unsafe {
-        BumpAllocator::with_current_pml4(mapping, HEAP_VIRT_BASE, MainFrameAllocator)
-    }));
 }

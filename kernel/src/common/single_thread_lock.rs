@@ -1,7 +1,5 @@
 use core::{
-    any,
-    cell::{Cell, UnsafeCell},
-    fmt, ptr,
+    any, cell::{Cell, UnsafeCell}, fmt, marker, pin::Pin, ptr
 };
 
 use arch_x86_64::instructions::interrupts;
@@ -9,6 +7,7 @@ use arch_x86_64::instructions::interrupts;
 pub struct SingleThreadLock<T> {
     locked: Cell<bool>,
     underlying: UnsafeCell<T>,
+    _unpin: marker::PhantomPinned,
 }
 
 struct ShortDebugForm<'a, T>(&'a SingleThreadLock<T>);
@@ -22,6 +21,7 @@ impl<T> SingleThreadLock<T> {
         Self {
             locked: Cell::new(false),
             underlying: UnsafeCell::new(underlying),
+            _unpin: marker::PhantomPinned,
         }
     }
 
@@ -52,6 +52,20 @@ impl<T> SingleThreadLock<T> {
             // Kernel is in panic=abort mode. If body panics we immediately exit into panic handler.
             // If panic handler panics its okay, code there shouldn't be sensetive to it.
             let result = body(unsafe { &mut *self.underlying.get() });
+            self.unlock();
+            result
+        })
+    }
+
+    #[track_caller]
+    pub fn with_lock_pinned<R>(self: Pin<&Self>, body: impl FnOnce(Pin<&mut T>) -> R) -> R {
+        interrupts::without_interrupts(|| {
+            self.lock();
+            let underlying = unsafe { &mut *self.underlying.get() };
+            let underlying = unsafe { Pin::new_unchecked(underlying) };
+            // Kernel is in panic=abort mode. If body panics we immediately exit into panic handler.
+            // If panic handler panics its okay, code there shouldn't be sensetive to it.
+            let result = body(underlying);
             self.unlock();
             result
         })

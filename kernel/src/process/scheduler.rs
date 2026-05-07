@@ -1,6 +1,6 @@
 use crate::{
     common::{LateInit, SingleThreadLock},
-    memory::PageAllocator,
+    memory::MemorySegment,
 };
 
 use super::{
@@ -75,6 +75,6 @@ pub fn init() {
     }
 }
 
-pub fn spawn(entry: fn() -> !, mm: &impl PageAllocator) -> TaskId {
+pub fn spawn(entry: fn() -> !, mm: &impl MemorySegment) -> TaskId {
     TABLE.with_lock(|table| table.spawn(entry, mm))
 }

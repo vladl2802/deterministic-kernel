@@ -1,7 +1,11 @@
 use core::mem::MaybeUninit;
 
-pub trait Size: Copy {}
+pub trait Size: Copy {
+    fn instance() -> Self;
+}
+
 pub trait Align: Copy {
+    fn instance() -> Self;
     fn check(addr: usize) -> bool;
 }
 
@@ -11,8 +15,17 @@ pub struct DynamicSize;
 #[derive(Debug, Clone, Copy)]
 pub struct FixedSize<const N: usize>;
 
-impl Size for DynamicSize {}
-impl<const N: usize> Size for FixedSize<N> {}
+impl Size for DynamicSize {
+    fn instance() -> Self {
+        Self
+    }
+}
+
+impl<const N: usize> Size for FixedSize<N> {
+    fn instance() -> Self {
+        Self
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnyAlign;
@@ -21,12 +34,20 @@ pub struct AnyAlign;
 pub struct Alignment<const N: usize>;
 
 impl Align for AnyAlign {
+    fn instance() -> Self {
+        Self
+    }
+
     fn check(_addr: usize) -> bool {
         true
     }
 }
 
 impl<const N: usize> Align for Alignment<N> {
+    fn instance() -> Self {
+        Self
+    }
+
     fn check(addr: usize) -> bool {
         addr % N == 0
     }
@@ -64,7 +85,9 @@ pub unsafe trait FixedBackedBlock<Tag, const N: usize, Al: Align>:
     fn as_uninit_array_ptr_mut(&mut self) -> *mut [MaybeUninit<u8>; N];
 }
 
-pub trait BlockChunks<Tag, Sz: Size, Al: Align>: IntoIterator<Item = Self::Block<Sz, Al>> + Sized {
+pub trait BlockChunks<Tag, Sz: Size, Al: Align>:
+    IntoIterator<Item = Self::Block<Sz, Al>> + Sized
+{
     type Block<BlSz: Size, BlAl: Align>: Block<Tag, BlSz, BlAl> + Copy;
 
     fn len(&self) -> usize;

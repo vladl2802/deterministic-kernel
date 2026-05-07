@@ -1,9 +1,10 @@
 use core::fmt;
 
+use arch_x86_64::{block::BlockAddress, instructions::segmentation::{CS, SS, Segment}};
+
+use crate::{interrupts::context::InterruptContext, memory::chunk::OwnedChunk};
+
 use super::context::FullContext;
-use crate::interrupts::context::InterruptContext;
-use crate::memory::MappingHandle;
-use arch_x86_64::instructions::segmentation::{CS, SS, Segment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskId(pub u64);
@@ -15,20 +16,20 @@ enum TaskState {
     Stopped,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Task {
     state: TaskState,
     id: TaskId,
     context: FullContext,
-    stack: MappingHandle,
+    stack: OwnedChunk,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskStateShort<'a>(&'a Task);
 
 impl Task {
-    pub fn new(id: TaskId, entry: fn() -> !, stack: MappingHandle) -> Self {
-        let stack_top = stack.start.as_u64() + stack.size as u64;
+    pub fn new(id: TaskId, entry: fn() -> !, stack: OwnedChunk) -> Self {
+        let stack_top = stack.memory().range().end;
         let context = FullContext {
             general_purpose: Default::default(),
             interrupt_context: InterruptContext {
@@ -36,7 +37,7 @@ impl Task {
                 rip: entry as u64,
                 cs: CS::get_reg().0 as u64,
                 rflags: 0x202,
-                rsp: stack_top,
+                rsp: stack_top.as_u64(),
                 ss: SS::get_reg().0 as u64,
             },
         };

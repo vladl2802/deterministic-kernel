@@ -18,9 +18,11 @@ mod tss;
 use alloc::vec::Vec;
 use core;
 
-use arch_x86_64::{protocol::BootInfo, pte::PageTableFlags};
 use log::{debug, error, info};
-use memory::{MainMemoryManager, PageAllocator};
+use memory::{MemoryManager, MemorySegment};
+use arch_x86_64::{block::BlockAddress, protocol::BootInfo};
+
+use crate::memory::MappingFlags;
 
 #[panic_handler]
 #[inline(never)]
@@ -34,7 +36,7 @@ fn init(boot_info: &'static BootInfo) {
     logging::init(boot_info.logging_port);
     event::init(boot_info.event_port);
     memory::init(boot_info);
-    let tss = tss::init(&MainMemoryManager);
+    let tss = tss::init(MemoryManager::main_segment());
     gdt::init(tss);
     interrupts::init();
     process::init();
@@ -64,21 +66,21 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     info!("inited with boot_info = {:?}", boot_info);
     info!("kernel run salt is: {:X}", boot_info.salt);
 
-    process::spawn(task_a, &MainMemoryManager);
-    process::spawn(task_b, &MainMemoryManager);
+    process::spawn(task_a, MemoryManager::main_segment());
+    process::spawn(task_b, MemoryManager::main_segment());
 
     common::hit(b'A');
     debug!("first log is HERE!");
     common::hit(b'B');
 
-    let handle = MainMemoryManager
-        .map(4096, PageTableFlags::PRESENT | PageTableFlags::WRITABLE)
+    let handle = MemoryManager::main_segment()
+        .map(4096, MappingFlags::WRITE)
         .unwrap();
-    unsafe { handle.start.as_mut_ptr::<u8>().write(0xAB) };
-    let val = unsafe { handle.start.as_ptr::<u8>().read() };
+    unsafe { handle.memory().begin().as_mut_ptr::<u8>().write(0xAB) };
+    let val = unsafe { handle.memory().begin().as_ptr::<u8>().read() };
     assert_eq!(val, 0xAB);
     info!("memory manager ok: {:#x}", val);
-    MainMemoryManager.unmap(handle);
+    MemoryManager::main_segment().unmap(handle);
 
     let mut vec = Vec::with_capacity(10);
     for _ in 0..20 {

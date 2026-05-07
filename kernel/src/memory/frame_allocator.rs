@@ -9,7 +9,7 @@ use arch_x86_64::{
     protocol::LinearPhysMapping,
 };
 
-use crate::common::{SingleThreadLock, StaticStructWrapper, declare_static_struct};
+use crate::common::SingleThreadLock;
 
 // TODO: deallocate on drop
 
@@ -133,24 +133,4 @@ impl FrameAllocator for SingleThreadLock<FramePool<'_>> {
     fn dealloc(&self, frame: OwnedFrame) {
         self.with_lock(|pool| pool.deallocate(frame))
     }
-}
-
-impl<T: StaticStructWrapper<UnderlyingT: FrameAllocator>> FrameAllocator for T {
-    fn alloc(&self) -> Option<OwnedFrame> {
-        Self::get().alloc()
-    }
-
-    fn dealloc(&self, frame: OwnedFrame) {
-        Self::get().dealloc(frame);
-    }
-}
-
-declare_static_struct!(pub main_frame_alloc => MainFrameAllocator = SingleThreadLock<FramePool<'static>>);
-pub use main_frame_alloc::MainFrameAllocator;
-
-pub fn init(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) {
-    MainFrameAllocator::finish_init(SingleThreadLock::new_unlocked(FramePool::new(
-        mapping,
-        first_usable_phys,
-    )))
 }
