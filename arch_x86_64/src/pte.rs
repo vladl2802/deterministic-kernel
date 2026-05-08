@@ -32,6 +32,14 @@ impl PageTable {
     pub unsafe fn existing_mut(page: &mut L0Page) -> &mut Self {
         &mut assert_alignment!(unsafe { page.bytes_mut().assume_init_mut().align_to_mut() })[0]
     }
+
+    pub fn entries_mut(&mut self) -> &mut [PageTableEntry; PAGE_TABLE_ENTRY_COUNT] {
+        &mut self.0
+    }
+
+    pub fn entries_ref(&self) -> &[PageTableEntry; PAGE_TABLE_ENTRY_COUNT] {
+        &self.0
+    }
 }
 
 impl Index<usize> for PageTable {

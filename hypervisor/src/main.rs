@@ -2,11 +2,12 @@
 #![feature(unsafe_cell_access)]
 
 mod guest_phys;
+mod loader;
 
 use core::slice;
 use std::{
     cell::{Cell, UnsafeCell},
-    cmp, env,
+    env,
     fs::File,
     io::Read,
     mem::{self, MaybeUninit},
@@ -28,7 +29,6 @@ use arch_x86_64::{
     protocol, pte,
 };
 use common::{align_marker::AlignMarker, try_alignment};
-use goblin::elf::{Dynamic, Elf, program_header};
 use nix::libc;
 use tracing::{Level, error, span, trace, warn};
 use tracing_subscriber;
@@ -40,6 +40,7 @@ use crate::guest_phys::GuestPhysBlock;
 const MEM_SIZE: u64 = 6 * 1024 * 1024;
 const LOG_PORT: u16 = 0xE9;
 const EVENT_PORT: u16 = 0xEA;
+const KERNEL_VIRT_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
 struct Mmap {
     ptr: *mut u8,
@@ -136,7 +137,7 @@ struct AllocatingPageTable<'a> {
     level: u8,
     allocated: u16,
     virt_space_base: VirtAddr,
-    pte: &'a mut pte::PageTable,
+    entries: &'a mut [pte::PageTableEntry],
 }
 
 impl<'a> AllocatingPageTable<'a> {
@@ -145,7 +146,7 @@ impl<'a> AllocatingPageTable<'a> {
             level: 4,
             allocated: 0,
             virt_space_base: VirtAddr::zero(),
-            pte: pte::PageTable::new_non_present(frame.into_page_mut()),
+            entries: pte::PageTable::new_non_present(frame.into_page_mut()).entries_mut(),
         }
     }
 
@@ -158,8 +159,8 @@ impl<'a> AllocatingPageTable<'a> {
         let span = span!(Level::TRACE, "AllocPTE.allocate");
         let _enter = span.enter();
         let index = self.allocated as usize;
-        let res = if index < pte::PAGE_TABLE_ENTRY_COUNT {
-            self.pte[index] = pte::PageTableEntry::new(phys, flags);
+        let res = if index < self.entries.len() {
+            self.entries[index] = pte::PageTableEntry::new(phys, flags);
             self.allocated += 1;
             let virt = self.child_virt_addr_base(self.allocated - 1);
             Some(virt)
@@ -180,8 +181,17 @@ impl<'a> AllocatingPageTable<'a> {
             level: self.level - 1,
             allocated: 0,
             virt_space_base,
-            pte: pte::PageTable::new_non_present(frame.into_page_mut()),
+            entries: pte::PageTable::new_non_present(frame.into_page_mut()).entries_mut(),
         })
+    }
+
+    fn split_at(self, index: usize) -> (Self, Self) {
+        let right_base = self.child_virt_addr_base(index as u16);
+        let (left, right) = self.entries.split_at_mut(index);
+        (
+            AllocatingPageTable { level: self.level, allocated: 0, virt_space_base: self.virt_space_base, entries: left },
+            AllocatingPageTable { level: self.level, allocated: 0, virt_space_base: right_base, entries: right },
+        )
     }
 }
 
@@ -230,69 +240,6 @@ impl<'a> FrameAllocator<'a, L0_PAGE_SIZE> for BumpFrameAllocator<'a> {
     }
 }
 
-struct KernelBinary<'a> {
-    binary: &'a [u8],
-    elf: Elf<'a>,
-}
-
-impl<'a> KernelBinary<'a> {
-    fn from_binary(binary: &'a [u8]) -> Self {
-        Self {
-            binary,
-            elf: Elf::parse(binary).unwrap(),
-        }
-    }
-
-    fn needed_memory(&self) -> Option<Range<PhysAddr>> {
-        let needed_range = self
-            .elf
-            .program_headers
-            .iter()
-            .map(|header| Range {
-                start: header.p_vaddr,
-                end: header.p_vaddr + header.p_memsz,
-            })
-            .fold(None, |pref: Option<Range<u64>>, range| {
-                Some(match pref {
-                    Some(pref) => Range {
-                        start: cmp::min(pref.start, range.start),
-                        end: cmp::max(pref.end, range.end),
-                    },
-                    None => range,
-                })
-            });
-        needed_range.map(|Range { start, end }| {
-            let start = PhysAddr::new(start).align_down(L0Page::SIZE);
-            let end = PhysAddr::new(end).align_up(L0Page::SIZE);
-            Range { start, end }
-        })
-    }
-
-    fn load(&self, mem: &'a mut [MaybeUninit<u8>]) {
-        for header in &self.elf.program_headers {
-            if header.p_type != program_header::PT_LOAD {
-                continue;
-            }
-
-            let file_offset = header.p_offset as usize;
-            let file_size = header.p_filesz as usize;
-            let mem_size = header.p_memsz as usize;
-            let dst = header.p_vaddr as usize;
-
-            // TODO: add checks that mem is big enough
-
-            mem[dst..dst + file_size]
-                .write_copy_of_slice(&self.binary[file_offset..file_offset + file_size]);
-            if mem_size > file_size {
-                mem[dst + file_size..dst + mem_size].write_filled(0);
-            }
-        }
-    }
-
-    fn entry(&self) -> u64 {
-        self.elf.entry
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 struct AddressSpaceState {
@@ -327,7 +274,7 @@ impl AddressSpaceState {
         Self::kernel_flags() | Self::stack_flags() | Self::boot_info_flags()
     }
 
-    fn setup(phys_mem: &mut PhysicalMemory, kernel: &KernelBinary) -> Self {
+    fn setup(phys_mem: &mut PhysicalMemory, kernel: &loader::KernelBinary) -> Self {
         let span = span!(Level::TRACE, "AddressSpaceState.setup");
         let _enter = span.enter();
         let mut kernel_binary_range = kernel.needed_memory().unwrap();
@@ -343,39 +290,48 @@ impl AddressSpaceState {
         let (kernel_binary_memory, _kernel_memory) = kernel_memory_chunks
             .split_at(kernel_binary_range.end.as_u64() as usize / L1_HUGE_PAGE_SIZE);
         let kernel_binary_memory = kernel_binary_memory.into_block();
-        // TODO: right now kernel memory only contains kernel binary. Consider storing stack and boot_info here also.
-        // Or just shrink kernel memory region.
-        // let mut kernel_memory = kernel_memory.into_block();
 
         let vm_memory = phys_mem.vm_region.into_guest_phys();
-
         let frame_alloc = BumpFrameAllocator::new(vm_memory).unwrap();
 
         let pt4_frame = frame_alloc.alloc_frame().unwrap();
         let pt4_address = pt4_frame.begin();
-        let mut pt4 = AllocatingPageTable::root(pt4_frame);
+        let pt4 = AllocatingPageTable::root(pt4_frame);
+        let (mut pt4_low, mut pt4_high) = pt4.split_at(511);
+        // Lower-half: user, Upper-half: kernel
 
-        let pt3_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt3 = pt4.allocate_pte(pt3_frame, Self::general_flags()).unwrap();
+        // Lower-half chain: PML4[0] -> pt3_low -> pt2_low
+        // pt2_low maps vm_region as huge pages (phys mapping) and holds pt1 for stack/boot_info
+        let pt3_low_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt3_low = pt4_low.allocate_pte(pt3_low_frame, Self::general_flags()).unwrap();
 
-        let pt2_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt2 = pt3.allocate_pte(pt2_frame, Self::general_flags()).unwrap();
-
-        let entry = Self::setup_kernel(kernel_binary_memory, &mut pt2, kernel);
+        let pt2_low_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt2_low = pt3_low.allocate_pte(pt2_low_frame, Self::general_flags()).unwrap();
 
         let pt1_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt1 = pt2
+        let mut pt1 = pt2_low
             .allocate_pte(pt1_frame, Self::stack_flags() | Self::boot_info_flags())
             .unwrap();
 
         let stack = Self::setup_stack(&mut pt1, &frame_alloc);
         let boot_info_frame = frame_alloc.alloc_frame().unwrap();
 
-        let next_free_addr = frame_alloc.next_free_addr();
+        let memory_region = Self::setup_vm_memory(vm_memory, &mut pt2_low);
 
-        let memory_region = Self::setup_vm_memory(vm_memory, &mut pt2);
+        // Upper-half chain: PML4[511] -> pt3_high[510] -> pt2_high
+        // pt2_high maps kernel binary as huge pages at KERNEL_VIRT_BASE (0xFFFFFFFF80000000)
+        let pt3_high_frame = frame_alloc.alloc_frame().unwrap();
+        let pt3_high = pt4_high.allocate_pte(pt3_high_frame, Self::general_flags()).unwrap();
+
+        let pt2_high_frame = frame_alloc.alloc_frame().unwrap();
+        let (_, mut pt3_high_upper) = pt3_high.split_at(510);
+        let mut pt2_high = pt3_high_upper.allocate_pte(pt2_high_frame, Self::general_flags()).unwrap();
+
+        let next_free_addr = frame_alloc.next_free_addr();
         let boot_info =
             Self::setup_boot_info(&mut pt1, boot_info_frame, memory_region, next_free_addr);
+
+        let entry = Self::setup_kernel(kernel_binary_memory, &mut pt2_high, kernel);
 
         Self {
             pt4: pt4_address,
@@ -388,7 +344,7 @@ impl AddressSpaceState {
     fn setup_kernel(
         mut region: GuestPhysBlock<'_, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
         pt2: &mut AllocatingPageTable,
-        kernel: &KernelBinary,
+        kernel: &loader::KernelBinary,
     ) -> VirtAddr {
         let span = span!(Level::TRACE, "AddressSpaceState.setup_kernel");
         let _enter = span.enter();
@@ -401,9 +357,9 @@ impl AddressSpaceState {
         }
 
         let memory = unsafe { &mut *region.as_uninit_ptr_mut() };
-        kernel.load(memory);
+        kernel.load_at(memory, KERNEL_VIRT_BASE);
 
-        VirtAddr::new(kernel.entry())
+        kernel.entry_virt(KERNEL_VIRT_BASE)
     }
 
     fn setup_vm_memory(
@@ -555,7 +511,7 @@ fn setup_vm(kvm: &Kvm, kernel_binary: &str) -> (VmFd, VcpuFd, PhysicalMemory) {
         .unwrap()
         .read_to_end(&mut elf_data)
         .unwrap();
-    let kernel = KernelBinary::from_binary(&elf_data);
+    let kernel = loader::KernelBinary::from_binary(&elf_data);
 
     let mut phys_mem = PhysicalMemory::setup(&vm);
     let address_space = AddressSpaceState::setup(&mut phys_mem, &kernel);

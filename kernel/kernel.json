@@ -9,8 +9,17 @@
     "target-endian": "little",
     "target-pointer-width": 64,
 
+    "code-model": "kernel",
+    "relocation-model": "pie",
+
     "linker": "rust-lld",
     "linker-flavor": "ld.lld",
+    "pre-link-args": {
+        "ld.lld": [
+            "-pie",
+            "--no-dynamic-linker"
+        ]
+    },
 
     "features": "-mmx,-sse,+soft-float",
     "rustc-abi": "x86-softfloat",
