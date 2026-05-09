@@ -8,8 +8,6 @@ use crate::{
 };
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
-// TODO: this is actually shouldn't be needed. ring0 switch stack will be used, when proper userspace will be implemented.
-pub const SYSCALL_IST_INDEX: u16 = 1;
 const DOUBLE_FAULT_STACK_SIZE: usize = 4096 * 5;
 const RING0_STACK_SIZE: usize = 4096 * 5;
 
@@ -31,8 +29,6 @@ pub fn init(mm: &impl MemorySegment) -> &'static TaskStateSegment {
     let mut tss = TaskStateSegment::new();
     tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
         VirtAddr::new(df_stack.memory().begin().as_u64() + DOUBLE_FAULT_STACK_SIZE as u64);
-    tss.interrupt_stack_table[SYSCALL_IST_INDEX as usize] =
-        VirtAddr::new(syscall_stack.memory().begin().as_u64() + SYSCALL_IST_INDEX as u64);
     tss.privilege_stack_table[0] =
         VirtAddr::new(ring0_stack.memory().begin().as_u64() + RING0_STACK_SIZE as u64);
 
@@ -45,4 +41,8 @@ pub fn init(mm: &impl MemorySegment) -> &'static TaskStateSegment {
         TSS.finish_init(tss);
     }
     &TSS
+}
+
+pub fn ring0_rsp() -> u64 {
+    TSS.privilege_stack_table[0].as_u64()
 }

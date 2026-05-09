@@ -1,5 +1,5 @@
 use crate::{
-    common::{LateInit, SingleThreadLock},
+    common::{self, LateInit, SingleThreadLock},
     memory::MemorySegment,
 };
 
@@ -16,8 +16,12 @@ struct Scheduler {
 pub fn exit_current(current: *mut FullContext) -> *mut FullContext {
     log::info!("exiting current");
 
+    common::hit(1);
+
     let current_id = SCHEDULER.with_lock(|sched| sched.current);
     let next_id = TABLE.with_lock(|table| table.next_after(current_id));
+
+    common::hit(2);
 
     if let Some(current_id) = current_id {
         TABLE.with_lock(|table| {
@@ -26,6 +30,8 @@ pub fn exit_current(current: *mut FullContext) -> *mut FullContext {
         });
     }
 
+   common::hit(3);
+
     SCHEDULER.with_lock(|sched| sched.current = next_id);
     if let Some(next_id) = next_id {
         TABLE.with_lock(|table| {
@@ -33,6 +39,8 @@ pub fn exit_current(current: *mut FullContext) -> *mut FullContext {
             unsafe { current.write(next_ctx) };
         });
     }
+
+    common::hit(4);
 
     current
 }

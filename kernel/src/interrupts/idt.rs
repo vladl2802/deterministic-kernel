@@ -39,9 +39,6 @@ pub fn init() {
     set_handler!(idt, security_exception);
     unsafe {
         idt[32].set_handler_addr(VirtAddr::new(handler::timer_interrupt as u64));
-        idt[0x80]
-            .set_handler_addr(VirtAddr::new(handler::syscall_interrupt as u64))
-            .set_stack_index(tss::SYSCALL_IST_INDEX);
         IDT.finish_init(idt);
     }
     IDT.load();

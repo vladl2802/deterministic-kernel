@@ -11,6 +11,7 @@ use crate::{common, memory::MemorySegment};
 pub use task::TaskId;
 
 pub fn init() {
+    syscall::init();
     scheduler::init();
     timer::init();
 }

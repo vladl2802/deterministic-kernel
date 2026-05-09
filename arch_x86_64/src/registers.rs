@@ -1,3 +1,5 @@
+pub use x86_64::registers::*;
+
 use crate::addr::PhysAddr;
 
 pub struct Cr3(PhysAddr);

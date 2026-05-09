@@ -615,7 +615,7 @@ fn setup_sregs(vcpu: &VcpuFd, pt4: PhysAddr) {
     sregs.cr4 |= 1 << 5; // PAE
     sregs.cr0 |= 1 << 0; // PE
     sregs.cr0 |= 1 << 31; // PG
-    sregs.efer |= (1 << 8) | (1 << 10) | (1 << 11); // LME|LMA|NXE
+    sregs.efer |= (1 << 0) | (1 << 8) | (1 << 10) | (1 << 11); // Syscall|LME|LMA|NXE
 
     vcpu.set_sregs(&sregs).unwrap();
 }
