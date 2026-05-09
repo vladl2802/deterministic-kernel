@@ -4,7 +4,6 @@ use core::{
 };
 
 use arch_x86_64::{
-    addr::PhysAddr,
     frage::{L0Frame, L0Page},
     protocol::LinearPhysMapping,
 };
@@ -66,14 +65,12 @@ pub struct FramePool<'a> {
 }
 
 impl<'a> FramePool<'a> {
-    pub fn new(mapping: &'a LinearPhysMapping, first_usable_phys: PhysAddr) -> Self {
+    pub fn new(mapping: &'a LinearPhysMapping, pre_allocated: u64) -> Self {
         let free_count = mapping.frame_count();
-        let first_free =
-            (first_usable_phys - mapping.frame_from_index(0).base_address()) / L0Page::SIZE;
-        let first_free = if first_free >= free_count {
+        let first_free = if pre_allocated >= free_count {
             None
         } else {
-            Some(first_free)
+            Some(pre_allocated)
         };
 
         Self {

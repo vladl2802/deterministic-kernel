@@ -43,9 +43,9 @@ impl<'a> KernelBinary<'a> {
         })
     }
 
-    pub fn load_at(&self, mem: &mut [MaybeUninit<u8>], load_virt_base: u64) {
+    pub fn load_at(&self, mem: &mut [MaybeUninit<u8>], load_virt_base: VirtAddr) {
         self.load_segments(mem);
-        self.apply_relocations(mem, load_virt_base);
+        self.apply_relocations(mem, load_virt_base.as_u64());
     }
 
     fn load_segments(&self, mem: &mut [MaybeUninit<u8>]) {
@@ -81,7 +81,7 @@ impl<'a> KernelBinary<'a> {
         }
     }
 
-    pub fn entry_virt(&self, load_virt_base: u64) -> VirtAddr {
-        VirtAddr::new(load_virt_base + self.elf.entry)
+    pub fn entry_virt(&self, load_virt_base: VirtAddr) -> VirtAddr {
+        load_virt_base + self.elf.entry
     }
 }

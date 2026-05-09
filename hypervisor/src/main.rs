@@ -19,6 +19,9 @@ use kvm_bindings::{
     KVM_MEM_LOG_DIRTY_PAGES, KVM_PIT_SPEAKER_DUMMY, kvm_pit_config, kvm_userspace_memory_region,
 };
 use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
+use nix::libc;
+use tracing::{Level, error, span, trace, warn};
+use tracing_subscriber;
 
 use arch_x86_64::{
     addr::{PhysAddr, VirtAddr},
@@ -29,18 +32,13 @@ use arch_x86_64::{
     protocol, pte,
 };
 use common::{align_marker::AlignMarker, try_alignment};
-use nix::libc;
-use tracing::{Level, error, span, trace, warn};
-use tracing_subscriber;
 
 use crate::guest_phys::GuestPhysBlock;
 
 // TODO: unwrap -> anyhow or something similar
 
-const MEM_SIZE: u64 = 6 * 1024 * 1024;
 const LOG_PORT: u16 = 0xE9;
 const EVENT_PORT: u16 = 0xEA;
-const KERNEL_VIRT_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
 struct Mmap {
     ptr: *mut u8,
@@ -92,28 +90,41 @@ impl PhysicalRegion {
     fn into_guest_phys(&mut self) -> GuestPhysBlock<'_, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>> {
         GuestPhysBlock::from_slice(self.base_phys, self.memory.as_uninit_slice())
     }
+
+    fn phys_range(&self) -> Range<PhysAddr> {
+        self.base_phys..self.base_phys + self.memory.size as u64
+    }
 }
 
 pub(crate) struct PhysicalMemory {
-    pub kernel_region: PhysicalRegion,
-    pub vm_region: PhysicalRegion,
+    pub static_region: PhysicalRegion,
+    pub kernel_dynamic_region: PhysicalRegion,
+    pub user_region: PhysicalRegion,
 }
 
 impl PhysicalMemory {
-    const KERNEL_REGION_SIZE: usize = 6 * 1024 * 1024;
-    const VM_REGION_SIZE: usize = 16 * 1024 * 1024;
+    pub const STATIC_REGION_SIZE: usize = 6 * 1024 * 1024;
+    pub const KERNEL_DYNAMIC_REGION_SIZE: usize = 16 * 1024 * 1024;
+    pub const USER_REGION_SIZE: usize = 16 * 1024 * 1024;
 
     pub fn setup(vm: &VmFd) -> Self {
-        let kernel_region = Self::setup_region(vm, 0, PhysAddr::new(0), Self::KERNEL_REGION_SIZE);
-        let vm_region = Self::setup_region(
-            vm,
-            1,
-            PhysAddr::new(Self::KERNEL_REGION_SIZE as u64),
-            Self::VM_REGION_SIZE,
-        );
+        let mut base_phys = PhysAddr::new(0);
+        let mut slot = 0;
+        let mut allocate = |size: usize| {
+            let region = Self::setup_region(vm, slot, base_phys, size);
+            slot += 1;
+            base_phys += size as u64;
+            region
+        };
+
+        let static_region = allocate(Self::STATIC_REGION_SIZE);
+        let kernel_dynamic_region = allocate(Self::KERNEL_DYNAMIC_REGION_SIZE);
+        let user_region = allocate(Self::USER_REGION_SIZE);
+
         Self {
-            kernel_region,
-            vm_region,
+            static_region,
+            kernel_dynamic_region,
+            user_region,
         }
     }
 
@@ -128,6 +139,11 @@ impl PhysicalMemory {
         };
         unsafe { vm.set_user_memory_region(region).unwrap() };
         PhysicalRegion::new(memory, base_phys)
+    }
+
+    pub fn total_phys_size() -> u64 {
+        (Self::STATIC_REGION_SIZE + Self::KERNEL_DYNAMIC_REGION_SIZE + Self::USER_REGION_SIZE)
+            as u64
     }
 }
 
@@ -185,12 +201,26 @@ impl<'a> AllocatingPageTable<'a> {
         })
     }
 
+    fn virt_range(&self) -> Range<VirtAddr> {
+        self.virt_space_base..self.child_virt_addr_base(self.allocated)
+    }
+
     fn split_at(self, index: usize) -> (Self, Self) {
         let right_base = self.child_virt_addr_base(index as u16);
         let (left, right) = self.entries.split_at_mut(index);
         (
-            AllocatingPageTable { level: self.level, allocated: 0, virt_space_base: self.virt_space_base, entries: left },
-            AllocatingPageTable { level: self.level, allocated: 0, virt_space_base: right_base, entries: right },
+            AllocatingPageTable {
+                level: self.level,
+                allocated: 0,
+                virt_space_base: self.virt_space_base,
+                entries: left,
+            },
+            AllocatingPageTable {
+                level: self.level,
+                allocated: 0,
+                virt_space_base: right_base,
+                entries: right,
+            },
         )
     }
 }
@@ -205,17 +235,19 @@ where
 struct BumpFrameAllocator<'a> {
     memory: UnsafeCell<&'a mut [L0Page]>,
     phys_offset: Cell<PhysAddr>,
+    count: Cell<u64>,
 }
 
 impl<'a> BumpFrameAllocator<'a> {
     fn new(
-        mut block: GuestPhysBlock<'a, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
+        mut block: GuestPhysBlock<DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
     ) -> Option<Self> {
         let memory = unsafe { &mut *block.as_uninit_ptr_mut() };
         let memory = try_alignment!(unsafe { memory.align_to_mut::<L0Page>() })?;
-        Some(Self {
+        Some(BumpFrameAllocator {
             memory: UnsafeCell::new(memory),
             phys_offset: Cell::new(block.begin()),
+            count: Cell::new(0),
         })
     }
 
@@ -223,8 +255,8 @@ impl<'a> BumpFrameAllocator<'a> {
         unsafe { *self.memory.get() }
     }
 
-    fn next_free_addr(self) -> PhysAddr {
-        self.phys_offset.get()
+    fn frames_allocated(&self) -> u64 {
+        self.count.get()
     }
 }
 
@@ -232,14 +264,15 @@ impl<'a> FrameAllocator<'a, L0_PAGE_SIZE> for BumpFrameAllocator<'a> {
     fn alloc_frame(&self) -> Option<L0GuestFrame<'a>> {
         let (first, rest) = self.memory().split_first_mut()?;
         unsafe { self.memory.replace(rest) };
-        Some(L0GuestFrame::from_array(
+        let frame = L0GuestFrame::from_array(
             self.phys_offset
                 .replace(self.phys_offset.get() + L0Page::SIZE),
             first.bytes_mut(),
-        ))
+        );
+        self.count.set(self.count.get() + 1);
+        Some(frame)
     }
 }
-
 
 #[derive(Debug, Clone, Copy)]
 struct AddressSpaceState {
@@ -277,78 +310,149 @@ impl AddressSpaceState {
     fn setup(phys_mem: &mut PhysicalMemory, kernel: &loader::KernelBinary) -> Self {
         let span = span!(Level::TRACE, "AddressSpaceState.setup");
         let _enter = span.enter();
+
         let mut kernel_binary_range = kernel.needed_memory().unwrap();
         kernel_binary_range.end = kernel_binary_range.end.align_up(L1HugePage::SIZE);
         assert!(
-            kernel_binary_range.end.as_u64() < MEM_SIZE,
-            "Preallocated not enough memory"
+            kernel_binary_range.end.as_u64() < PhysicalMemory::STATIC_REGION_SIZE as u64,
+            "Preallocated not enough static memory for kernel binary"
         );
+        let kernel_n_huge_pages =
+            (kernel_binary_range.end.as_u64() / L1_HUGE_PAGE_SIZE as u64) as usize;
 
-        let kernel_memory = phys_mem.kernel_region.into_guest_phys();
-        let kernel_memory_chunks = kernel_memory.chunk_by_fixed_aligned::<L1_HUGE_PAGE_SIZE>();
-        trace!(?kernel_memory_chunks);
-        let (kernel_binary_memory, _kernel_memory) = kernel_memory_chunks
-            .split_at(kernel_binary_range.end.as_u64() as usize / L1_HUGE_PAGE_SIZE);
-        let kernel_binary_memory = kernel_binary_memory.into_block();
+        // Frame allocator for page tables — pulls from kernel_dynamic_region
+        let tmp = &mut phys_mem.kernel_dynamic_region;
+        let kernel_dynamic_memory = tmp.into_guest_phys();
+        let frame_alloc = BumpFrameAllocator::new(kernel_dynamic_memory).unwrap();
 
-        let vm_memory = phys_mem.vm_region.into_guest_phys();
-        let frame_alloc = BumpFrameAllocator::new(vm_memory).unwrap();
-
+        // PML4
         let pt4_frame = frame_alloc.alloc_frame().unwrap();
         let pt4_address = pt4_frame.begin();
         let pt4 = AllocatingPageTable::root(pt4_frame);
-        let (mut pt4_low, mut pt4_high) = pt4.split_at(511);
-        // Lower-half: user, Upper-half: kernel
 
-        // Lower-half chain: PML4[0] -> pt3_low -> pt2_low
-        // pt2_low maps vm_region as huge pages (phys mapping) and holds pt1 for stack/boot_info
-        let pt3_low_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt3_low = pt4_low.allocate_pte(pt3_low_frame, Self::general_flags()).unwrap();
+        // PML4[0..255] = user space low half
+        // PML4[256..511] = kernel high half
+        let (_, pt4_high) = pt4.split_at(256);
 
-        let pt2_low_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt2_low = pt3_low.allocate_pte(pt2_low_frame, Self::general_flags()).unwrap();
+        // Isolate PML4[256]
+        let (mut pt4_at_256, pt4_rest) = pt4_high.split_at(1);
+        // Isolate PML4[384]
+        let (_, pt4_rest2) = pt4_rest.split_at(127);
+        let (pt4_at_384, pt4_rest3) = pt4_rest2.split_at(1);
+        // Isolate PML4[511]
+        let (_, mut pt4_at_511) = pt4_rest3.split_at(126);
 
-        let pt1_frame = frame_alloc.alloc_frame().unwrap();
-        let mut pt1 = pt2_low
-            .allocate_pte(pt1_frame, Self::stack_flags() | Self::boot_info_flags())
-            .unwrap();
+        let linear_mapping = Self::setup_linear_mapping_ptes(&frame_alloc, &mut pt4_at_256);
 
-        let stack = Self::setup_stack(&mut pt1, &frame_alloc);
+        let (entry, mut pt1_static, stack, kernel_static) = Self::setup_static_ptes(
+            &frame_alloc,
+            &mut pt4_at_511,
+            &mut phys_mem.static_region,
+            kernel,
+            kernel_n_huge_pages,
+        );
+
         let boot_info_frame = frame_alloc.alloc_frame().unwrap();
 
-        let memory_region = Self::setup_vm_memory(vm_memory, &mut pt2_low);
+        // All frame allocations done — record pre_allocated count
+        let pre_allocated = frame_alloc.frames_allocated();
 
-        // Upper-half chain: PML4[511] -> pt3_high[510] -> pt2_high
-        // pt2_high maps kernel binary as huge pages at KERNEL_VIRT_BASE (0xFFFFFFFF80000000)
-        let pt3_high_frame = frame_alloc.alloc_frame().unwrap();
-        let pt3_high = pt4_high.allocate_pte(pt3_high_frame, Self::general_flags()).unwrap();
-
-        let pt2_high_frame = frame_alloc.alloc_frame().unwrap();
-        let (_, mut pt3_high_upper) = pt3_high.split_at(510);
-        let mut pt2_high = pt3_high_upper.allocate_pte(pt2_high_frame, Self::general_flags()).unwrap();
-
-        let next_free_addr = frame_alloc.next_free_addr();
-        let boot_info =
-            Self::setup_boot_info(&mut pt1, boot_info_frame, memory_region, next_free_addr);
-
-        let entry = Self::setup_kernel(kernel_binary_memory, &mut pt2_high, kernel);
+        let boot_info_virt = Self::setup_boot_info(
+            &mut pt1_static,
+            boot_info_frame,
+            phys_mem,
+            linear_mapping,
+            kernel_static,
+            pt4_at_384.virt_range(),
+            pre_allocated,
+        );
 
         Self {
             pt4: pt4_address,
             entry,
             stack_top: stack.end,
-            boot_info,
+            boot_info: boot_info_virt,
         }
     }
 
+    fn setup_linear_mapping_ptes<'a>(
+        frame_alloc: &BumpFrameAllocator<'a>,
+        pt4: &mut AllocatingPageTable<'a>,
+    ) -> Range<VirtAddr> {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup_linear_mapping_ptes");
+        let _enter = span.enter();
+
+        let pt3_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt3 = pt4
+            .allocate_pte(pt3_frame, Self::general_flags())
+            .unwrap();
+
+        let pt2_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt2 = pt3
+            .allocate_pte(pt2_frame, Self::general_flags())
+            .unwrap();
+
+        let mut phys = PhysAddr::new(0);
+        while phys.as_u64() < PhysicalMemory::total_phys_size() {
+            pt2.allocate(phys, Self::phys_mapping_flags() | pte::PageTableFlags::HUGE)
+                .unwrap();
+            phys += L1_HUGE_PAGE_SIZE as u64;
+        }
+
+        pt2.virt_range()
+    }
+
+    fn setup_static_ptes<'a>(
+        frame_alloc: &BumpFrameAllocator<'a>,
+        pt4_at_511: &mut AllocatingPageTable<'a>,
+        static_region: &mut PhysicalRegion,
+        kernel: &loader::KernelBinary,
+        kernel_n_huge_pages: usize,
+    ) -> (VirtAddr, AllocatingPageTable<'a>, Range<VirtAddr>, Range<VirtAddr>) {
+        let span = span!(Level::TRACE, "AddressSpaceState.setup_static_ptes");
+        let _enter = span.enter();
+
+        let pt3_frame = frame_alloc.alloc_frame().unwrap();
+        let pt3 = pt4_at_511
+            .allocate_pte(pt3_frame, Self::general_flags())
+            .unwrap();
+        // PT3[510] -> PT2, virt_base = 0xFFFF_FFFF_8000_0000
+        let (_, mut pt3_at_510) = pt3.split_at(510);
+
+        let pt2_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt2 = pt3_at_510
+            .allocate_pte(pt2_frame, Self::general_flags())
+            .unwrap();
+
+        let static_block = static_region.into_guest_phys();
+        let entry = Self::setup_kernel(static_block, kernel_n_huge_pages, &mut pt2, kernel);
+
+        // PT1 for stack + boot_info (4K pages), placed after kernel binary huge pages
+        let pt1_frame = frame_alloc.alloc_frame().unwrap();
+        let mut pt1 = pt2
+            .allocate_pte(pt1_frame, Self::stack_flags() | Self::boot_info_flags())
+            .unwrap();
+
+        let stack = Self::setup_stack(&mut pt1, frame_alloc);
+        let static_virt = pt2.virt_range();
+
+        (entry, pt1, stack, static_virt)
+    }
+
     fn setup_kernel(
-        mut region: GuestPhysBlock<'_, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
+        mut static_block: GuestPhysBlock<'_, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
+        n_huge_pages: usize,
         pt2: &mut AllocatingPageTable,
         kernel: &loader::KernelBinary,
     ) -> VirtAddr {
         let span = span!(Level::TRACE, "AddressSpaceState.setup_kernel");
         let _enter = span.enter();
-        for chunk in region.chunk_by_fixed_aligned::<L1_HUGE_PAGE_SIZE>() {
+
+        let (binary_chunks, _) = static_block
+            .chunk_by_fixed_aligned::<L1_HUGE_PAGE_SIZE>()
+            .split_at(n_huge_pages);
+
+        for chunk in binary_chunks {
             pt2.allocate(
                 chunk.begin(),
                 Self::kernel_flags() | pte::PageTableFlags::HUGE,
@@ -356,30 +460,11 @@ impl AddressSpaceState {
             .unwrap();
         }
 
-        let memory = unsafe { &mut *region.as_uninit_ptr_mut() };
-        kernel.load_at(memory, KERNEL_VIRT_BASE);
+        let kernel_base = pt2.virt_range().start;
+        let memory = unsafe { &mut *static_block.as_uninit_ptr_mut() };
+        kernel.load_at(memory, kernel_base);
 
-        kernel.entry_virt(KERNEL_VIRT_BASE)
-    }
-
-    fn setup_vm_memory(
-        region: GuestPhysBlock<'_, DynamicSize, Alignment<L1_HUGE_PAGE_SIZE>>,
-        pt2: &mut AllocatingPageTable,
-    ) -> protocol::LinearPhysMapping {
-        let mut virt_base = None;
-        for chunk in region.chunk_by_fixed_aligned::<L1_HUGE_PAGE_SIZE>() {
-            let virt = pt2
-                .allocate(
-                    chunk.begin(),
-                    Self::phys_mapping_flags() | pte::PageTableFlags::HUGE,
-                )
-                .unwrap();
-            if virt_base.is_none() {
-                virt_base = Some(virt);
-            }
-        }
-
-        protocol::LinearPhysMapping::new(region.range(), virt_base.unwrap()).unwrap()
+        kernel.entry_virt(kernel_base)
     }
 
     fn setup_stack(
@@ -408,26 +493,72 @@ impl AddressSpaceState {
     fn setup_boot_info(
         pt1: &mut AllocatingPageTable,
         frame: L0GuestFrame,
-        memory_region: protocol::LinearPhysMapping,
-        first_free: PhysAddr,
+        phys_mem: &PhysicalMemory,
+        linear_mapping: Range<VirtAddr>,
+        kernel_static: Range<VirtAddr>,
+        kernel_dynamic: Range<VirtAddr>,
+        pre_allocated: u64,
     ) -> VirtAddr {
         let span = span!(Level::TRACE, "AddressSpaceState.setup_bootinfo");
         let _enter = span.enter();
+
         let virt = pt1
             .allocate(frame.begin(), Self::boot_info_flags())
             .unwrap();
 
+        let static_phys = phys_mem.static_region.phys_range();
+        let kernel_dyn_phys = phys_mem.kernel_dynamic_region.phys_range();
+        let user_phys = phys_mem.user_region.phys_range();
+
+        let phys_to_virt = |phys_base: PhysAddr| linear_mapping.start + phys_base.as_u64();
+
+        let static_mapping =
+            protocol::LinearPhysMapping::new(static_phys.clone(), phys_to_virt(static_phys.start))
+                .unwrap();
+        let kernel_dyn_mapping = protocol::LinearPhysMapping::new(
+            kernel_dyn_phys.clone(),
+            phys_to_virt(kernel_dyn_phys.start),
+        )
+        .unwrap();
+        let user_mapping = protocol::LinearPhysMapping::new(
+            user_phys.clone(),
+            phys_to_virt(user_phys.start),
+        )
+        .unwrap();
+
         let boot_info = protocol::BootInfo {
             logging_port: LOG_PORT,
             event_port: EVENT_PORT,
-            memory_region,
-            first_usable_phys: first_free,
+            physical_memory: protocol::PhysicalMemory {
+                static_region: static_mapping,
+                kernel_dynamic_region: protocol::PhysMemPool {
+                    mapping: kernel_dyn_mapping,
+                    pre_allocated,
+                },
+                user_region: protocol::PhysMemPool {
+                    mapping: user_mapping,
+                    pre_allocated: 0,
+                },
+            },
+            virtual_layout: protocol::VirtualLayout {
+                linear_mapping: Self::region_from_range(linear_mapping),
+                kernel_static: Self::region_from_range(kernel_static),
+                kernel_dynamic: Self::region_from_range(kernel_dynamic),
+            },
             salt: 0xDEADBEEF,
         };
+
         let bytes = frame.into_page_mut().bytes_mut();
         unsafe { (bytes.as_ptr() as *mut protocol::BootInfo).write(boot_info) };
 
         virt
+    }
+
+    fn region_from_range(range: Range<VirtAddr>) -> protocol::VirtRegion {
+        protocol::VirtRegion {
+            base: range.start,
+            size: range.end - range.start,
+        }
     }
 }
 
@@ -618,7 +749,9 @@ fn main() {
             }
             VcpuExit::MmioWrite(addr, _data) => {
                 println!("Received an MMIO Write Request to the address {:#x}.", addr);
-                let dirty_pages_bitmap = vm.get_dirty_log(0, MEM_SIZE as usize).unwrap();
+                let dirty_pages_bitmap = vm
+                    .get_dirty_log(0, PhysicalMemory::STATIC_REGION_SIZE)
+                    .unwrap();
                 let dirty_pages = dirty_pages_bitmap
                     .into_iter()
                     .map(|page| page.count_ones())

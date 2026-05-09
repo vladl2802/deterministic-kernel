@@ -1,10 +1,9 @@
 use core::fmt;
 
 use arch_x86_64::{
-    addr::{PhysAddr, VirtAddr},
     block::{Alignment, Block, BlockAddress, DynamicSize},
     frage::{L0_PAGE_SIZE, VirtBlock},
-    protocol::LinearPhysMapping,
+    protocol::BootInfo,
     pte::PageTableFlags,
 };
 use bitflags::bitflags;
@@ -88,12 +87,13 @@ impl MainSegment {
     }
 }
 
-const HEAP_VIRT_BASE: VirtAddr = VirtAddr::new_truncate(0x0000_4000_0000_0000);
-
 impl MainSegment {
-    fn new(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) -> Self {
-        let frame_pool = Lock::new_unlocked(FramePool::new(mapping, first_usable_phys));
-        let bump = unsafe { BumpAllocator::with_current_pml4(mapping, HEAP_VIRT_BASE, frame_pool) };
+    fn new(boot_info: &'static BootInfo) -> Self {
+        let pool = &boot_info.physical_memory.kernel_dynamic_region;
+        let mapping = &pool.mapping;
+        let frame_pool = Lock::new_unlocked(FramePool::new(mapping, pool.pre_allocated));
+        let heap_virt_base = boot_info.virtual_layout.kernel_dynamic.base;
+        let bump = unsafe { BumpAllocator::with_current_pml4(mapping, heap_virt_base, frame_pool) };
         MainSegment(Lock::new_unlocked(bump))
     }
 }
@@ -130,9 +130,9 @@ pub struct MemoryManagerState {
 declare_static_struct!(pub main_manager => MemoryManager = MemoryManagerState);
 pub use main_manager::MemoryManager;
 
-pub fn init(mapping: &'static LinearPhysMapping, first_usable_phys: PhysAddr) {
+pub fn init(boot_info: &'static BootInfo) {
     MemoryManager::finish_init(MemoryManagerState {
-        main_segment: MainSegment::new(mapping, first_usable_phys),
+        main_segment: MainSegment::new(boot_info),
     });
 }
 

@@ -14,8 +14,7 @@ pub use manager::{MemoryManager, MappingFlags, MemorySegment};
 const HEAP_SIZE: usize = 1024 * 1024; // 1 MiB
 
 pub fn init(boot_info: &'static BootInfo) {
-    let region = &boot_info.memory_region;
-    manager::init(region, boot_info.first_usable_phys);
+    manager::init(boot_info);
 
     let heap = MemoryManager::main_segment()
         .map(HEAP_SIZE, MappingFlags::READ | MappingFlags::WRITE)

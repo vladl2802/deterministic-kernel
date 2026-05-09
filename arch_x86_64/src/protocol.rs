@@ -8,12 +8,38 @@ use crate::{
 pub const HIT_PORT: u16 = 0xF0;
 
 #[derive(Clone, Copy, Debug)]
+pub struct VirtRegion {
+    pub base: VirtAddr,
+    pub size: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PhysMemPool {
+    pub mapping: LinearPhysMapping,
+    pub pre_allocated: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicalMemory {
+    pub static_region: LinearPhysMapping,
+    pub kernel_dynamic_region: PhysMemPool,
+    pub user_region: PhysMemPool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct VirtualLayout {
+    pub linear_mapping: VirtRegion,
+    pub kernel_static: VirtRegion,
+    pub kernel_dynamic: VirtRegion,
+}
+
+#[derive(Clone, Copy, Debug)]
 // TODO: Should become #[non_exhaustive]
 pub struct BootInfo {
     pub logging_port: u16,
     pub event_port: u16,
-    pub memory_region: LinearPhysMapping,
-    pub first_usable_phys: PhysAddr,
+    pub physical_memory: PhysicalMemory,
+    pub virtual_layout: VirtualLayout,
     pub salt: u64,
 }
 
